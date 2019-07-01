@@ -1,6 +1,12 @@
 libsql
 ======
 
+[![Go Report Card](https://goreportcard.com/badge/oss.indeed.com/go/libsql)](https://goreportcard.com/report/oss.indeed.com/go/libsql)
+[![Build Status](https://travis-ci.org/indeedeng/libsql.svg?branch=master)](https://travis-ci.org/indeedeng/libsql)
+[![GoDoc](https://godoc.org/oss.indeed.com/go/libsql?status.svg)](https://godoc.org/oss.indeed.com/go/libsql)
+[![NetflixOSS Lifecycle](https://img.shields.io/osslifecycle/indeedeng/libsql.svg)](OSSMETADATA)
+[![GitHub](https://img.shields.io/github/license/indeedeng/libsql.svg)](LICENSE)
+
 # Project Overview
 
 Package `libsql` provides wrappers for the Go standard library's "sql" package
