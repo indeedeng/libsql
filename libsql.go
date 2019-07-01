@@ -1,4 +1,4 @@
-package libsql
+package libsql // import "oss.indeed.com/go/libsql"
 
 import (
 	"context"
