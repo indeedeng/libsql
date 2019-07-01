@@ -1,3 +1,5 @@
+//+build tools
+
 package libsql
 
 // Tools written in Go can be installed using the go-get command.
