@@ -87,6 +87,6 @@ For more information please contact opensource@indeed.com.
 
 # License
 
-The `oss.indeed.com/go/libsql` module is open source under the BSD-3-Clause
+The `oss.indeed.com/go/libsql` module is open source under the [BSD-3-Clause](LICENSE)
 license.
 
