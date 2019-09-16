@@ -6,7 +6,7 @@ import (
 	mm_atomic "sync/atomic"
 	mm_time "time"
 
-	"github.com/gojuno/minimock"
+	"github.com/gojuno/minimock/v3"
 )
 
 // SqlResultMock implements sqlResult
@@ -14,11 +14,13 @@ type SqlResultMock struct {
 	t minimock.Tester
 
 	funcLastInsertId          func() (i1 int64, err error)
+	inspectFuncLastInsertId   func()
 	afterLastInsertIdCounter  uint64
 	beforeLastInsertIdCounter uint64
 	LastInsertIdMock          mSqlResultMockLastInsertId
 
 	funcRowsAffected          func() (i1 int64, err error)
+	inspectFuncRowsAffected   func()
 	afterRowsAffectedCounter  uint64
 	beforeRowsAffectedCounter uint64
 	RowsAffectedMock          mSqlResultMockRowsAffected
@@ -30,7 +32,9 @@ func NewSqlResultMock(t minimock.Tester) *SqlResultMock {
 	if controller, ok := t.(minimock.MockController); ok {
 		controller.RegisterMocker(m)
 	}
+
 	m.LastInsertIdMock = mSqlResultMockLastInsertId{mock: m}
+
 	m.RowsAffectedMock = mSqlResultMockRowsAffected{mock: m}
 
 	return m
@@ -57,74 +61,89 @@ type SqlResultMockLastInsertIdResults struct {
 }
 
 // Expect sets up expected params for sqlResult.LastInsertId
-func (m *mSqlResultMockLastInsertId) Expect() *mSqlResultMockLastInsertId {
-	if m.mock.funcLastInsertId != nil {
-		m.mock.t.Fatalf("SqlResultMock.LastInsertId mock is already set by Set")
+func (mmLastInsertId *mSqlResultMockLastInsertId) Expect() *mSqlResultMockLastInsertId {
+	if mmLastInsertId.mock.funcLastInsertId != nil {
+		mmLastInsertId.mock.t.Fatalf("SqlResultMock.LastInsertId mock is already set by Set")
 	}
 
-	if m.defaultExpectation == nil {
-		m.defaultExpectation = &SqlResultMockLastInsertIdExpectation{}
+	if mmLastInsertId.defaultExpectation == nil {
+		mmLastInsertId.defaultExpectation = &SqlResultMockLastInsertIdExpectation{}
 	}
 
-	return m
+	return mmLastInsertId
+}
+
+// Inspect accepts an inspector function that has same arguments as the sqlResult.LastInsertId
+func (mmLastInsertId *mSqlResultMockLastInsertId) Inspect(f func()) *mSqlResultMockLastInsertId {
+	if mmLastInsertId.mock.inspectFuncLastInsertId != nil {
+		mmLastInsertId.mock.t.Fatalf("Inspect function is already set for SqlResultMock.LastInsertId")
+	}
+
+	mmLastInsertId.mock.inspectFuncLastInsertId = f
+
+	return mmLastInsertId
 }
 
 // Return sets up results that will be returned by sqlResult.LastInsertId
-func (m *mSqlResultMockLastInsertId) Return(i1 int64, err error) *SqlResultMock {
-	if m.mock.funcLastInsertId != nil {
-		m.mock.t.Fatalf("SqlResultMock.LastInsertId mock is already set by Set")
+func (mmLastInsertId *mSqlResultMockLastInsertId) Return(i1 int64, err error) *SqlResultMock {
+	if mmLastInsertId.mock.funcLastInsertId != nil {
+		mmLastInsertId.mock.t.Fatalf("SqlResultMock.LastInsertId mock is already set by Set")
 	}
 
-	if m.defaultExpectation == nil {
-		m.defaultExpectation = &SqlResultMockLastInsertIdExpectation{mock: m.mock}
+	if mmLastInsertId.defaultExpectation == nil {
+		mmLastInsertId.defaultExpectation = &SqlResultMockLastInsertIdExpectation{mock: mmLastInsertId.mock}
 	}
-	m.defaultExpectation.results = &SqlResultMockLastInsertIdResults{i1, err}
-	return m.mock
+	mmLastInsertId.defaultExpectation.results = &SqlResultMockLastInsertIdResults{i1, err}
+	return mmLastInsertId.mock
 }
 
 //Set uses given function f to mock the sqlResult.LastInsertId method
-func (m *mSqlResultMockLastInsertId) Set(f func() (i1 int64, err error)) *SqlResultMock {
-	if m.defaultExpectation != nil {
-		m.mock.t.Fatalf("Default expectation is already set for the sqlResult.LastInsertId method")
+func (mmLastInsertId *mSqlResultMockLastInsertId) Set(f func() (i1 int64, err error)) *SqlResultMock {
+	if mmLastInsertId.defaultExpectation != nil {
+		mmLastInsertId.mock.t.Fatalf("Default expectation is already set for the sqlResult.LastInsertId method")
 	}
 
-	if len(m.expectations) > 0 {
-		m.mock.t.Fatalf("Some expectations are already set for the sqlResult.LastInsertId method")
+	if len(mmLastInsertId.expectations) > 0 {
+		mmLastInsertId.mock.t.Fatalf("Some expectations are already set for the sqlResult.LastInsertId method")
 	}
 
-	m.mock.funcLastInsertId = f
-	return m.mock
+	mmLastInsertId.mock.funcLastInsertId = f
+	return mmLastInsertId.mock
 }
 
 // LastInsertId implements sqlResult
-func (m *SqlResultMock) LastInsertId() (i1 int64, err error) {
-	mm_atomic.AddUint64(&m.beforeLastInsertIdCounter, 1)
-	defer mm_atomic.AddUint64(&m.afterLastInsertIdCounter, 1)
+func (mmLastInsertId *SqlResultMock) LastInsertId() (i1 int64, err error) {
+	mm_atomic.AddUint64(&mmLastInsertId.beforeLastInsertIdCounter, 1)
+	defer mm_atomic.AddUint64(&mmLastInsertId.afterLastInsertIdCounter, 1)
 
-	if m.LastInsertIdMock.defaultExpectation != nil {
-		mm_atomic.AddUint64(&m.LastInsertIdMock.defaultExpectation.Counter, 1)
+	if mmLastInsertId.inspectFuncLastInsertId != nil {
+		mmLastInsertId.inspectFuncLastInsertId()
+	}
 
-		results := m.LastInsertIdMock.defaultExpectation.results
-		if results == nil {
-			m.t.Fatal("No results are set for the SqlResultMock.LastInsertId")
+	if mmLastInsertId.LastInsertIdMock.defaultExpectation != nil {
+		mm_atomic.AddUint64(&mmLastInsertId.LastInsertIdMock.defaultExpectation.Counter, 1)
+
+		mm_results := mmLastInsertId.LastInsertIdMock.defaultExpectation.results
+		if mm_results == nil {
+			mmLastInsertId.t.Fatal("No results are set for the SqlResultMock.LastInsertId")
 		}
-		return (*results).i1, (*results).err
+		return (*mm_results).i1, (*mm_results).err
 	}
-	if m.funcLastInsertId != nil {
-		return m.funcLastInsertId()
+	if mmLastInsertId.funcLastInsertId != nil {
+		return mmLastInsertId.funcLastInsertId()
 	}
-	m.t.Fatalf("Unexpected call to SqlResultMock.LastInsertId.")
+	mmLastInsertId.t.Fatalf("Unexpected call to SqlResultMock.LastInsertId.")
 	return
 }
 
 // LastInsertIdAfterCounter returns a count of finished SqlResultMock.LastInsertId invocations
-func (m *SqlResultMock) LastInsertIdAfterCounter() uint64 {
-	return mm_atomic.LoadUint64(&m.afterLastInsertIdCounter)
+func (mmLastInsertId *SqlResultMock) LastInsertIdAfterCounter() uint64 {
+	return mm_atomic.LoadUint64(&mmLastInsertId.afterLastInsertIdCounter)
 }
 
 // LastInsertIdBeforeCounter returns a count of SqlResultMock.LastInsertId invocations
-func (m *SqlResultMock) LastInsertIdBeforeCounter() uint64 {
-	return mm_atomic.LoadUint64(&m.beforeLastInsertIdCounter)
+func (mmLastInsertId *SqlResultMock) LastInsertIdBeforeCounter() uint64 {
+	return mm_atomic.LoadUint64(&mmLastInsertId.beforeLastInsertIdCounter)
 }
 
 // MinimockLastInsertIdDone returns true if the count of the LastInsertId invocations corresponds
@@ -186,74 +205,89 @@ type SqlResultMockRowsAffectedResults struct {
 }
 
 // Expect sets up expected params for sqlResult.RowsAffected
-func (m *mSqlResultMockRowsAffected) Expect() *mSqlResultMockRowsAffected {
-	if m.mock.funcRowsAffected != nil {
-		m.mock.t.Fatalf("SqlResultMock.RowsAffected mock is already set by Set")
+func (mmRowsAffected *mSqlResultMockRowsAffected) Expect() *mSqlResultMockRowsAffected {
+	if mmRowsAffected.mock.funcRowsAffected != nil {
+		mmRowsAffected.mock.t.Fatalf("SqlResultMock.RowsAffected mock is already set by Set")
 	}
 
-	if m.defaultExpectation == nil {
-		m.defaultExpectation = &SqlResultMockRowsAffectedExpectation{}
+	if mmRowsAffected.defaultExpectation == nil {
+		mmRowsAffected.defaultExpectation = &SqlResultMockRowsAffectedExpectation{}
 	}
 
-	return m
+	return mmRowsAffected
+}
+
+// Inspect accepts an inspector function that has same arguments as the sqlResult.RowsAffected
+func (mmRowsAffected *mSqlResultMockRowsAffected) Inspect(f func()) *mSqlResultMockRowsAffected {
+	if mmRowsAffected.mock.inspectFuncRowsAffected != nil {
+		mmRowsAffected.mock.t.Fatalf("Inspect function is already set for SqlResultMock.RowsAffected")
+	}
+
+	mmRowsAffected.mock.inspectFuncRowsAffected = f
+
+	return mmRowsAffected
 }
 
 // Return sets up results that will be returned by sqlResult.RowsAffected
-func (m *mSqlResultMockRowsAffected) Return(i1 int64, err error) *SqlResultMock {
-	if m.mock.funcRowsAffected != nil {
-		m.mock.t.Fatalf("SqlResultMock.RowsAffected mock is already set by Set")
+func (mmRowsAffected *mSqlResultMockRowsAffected) Return(i1 int64, err error) *SqlResultMock {
+	if mmRowsAffected.mock.funcRowsAffected != nil {
+		mmRowsAffected.mock.t.Fatalf("SqlResultMock.RowsAffected mock is already set by Set")
 	}
 
-	if m.defaultExpectation == nil {
-		m.defaultExpectation = &SqlResultMockRowsAffectedExpectation{mock: m.mock}
+	if mmRowsAffected.defaultExpectation == nil {
+		mmRowsAffected.defaultExpectation = &SqlResultMockRowsAffectedExpectation{mock: mmRowsAffected.mock}
 	}
-	m.defaultExpectation.results = &SqlResultMockRowsAffectedResults{i1, err}
-	return m.mock
+	mmRowsAffected.defaultExpectation.results = &SqlResultMockRowsAffectedResults{i1, err}
+	return mmRowsAffected.mock
 }
 
 //Set uses given function f to mock the sqlResult.RowsAffected method
-func (m *mSqlResultMockRowsAffected) Set(f func() (i1 int64, err error)) *SqlResultMock {
-	if m.defaultExpectation != nil {
-		m.mock.t.Fatalf("Default expectation is already set for the sqlResult.RowsAffected method")
+func (mmRowsAffected *mSqlResultMockRowsAffected) Set(f func() (i1 int64, err error)) *SqlResultMock {
+	if mmRowsAffected.defaultExpectation != nil {
+		mmRowsAffected.mock.t.Fatalf("Default expectation is already set for the sqlResult.RowsAffected method")
 	}
 
-	if len(m.expectations) > 0 {
-		m.mock.t.Fatalf("Some expectations are already set for the sqlResult.RowsAffected method")
+	if len(mmRowsAffected.expectations) > 0 {
+		mmRowsAffected.mock.t.Fatalf("Some expectations are already set for the sqlResult.RowsAffected method")
 	}
 
-	m.mock.funcRowsAffected = f
-	return m.mock
+	mmRowsAffected.mock.funcRowsAffected = f
+	return mmRowsAffected.mock
 }
 
 // RowsAffected implements sqlResult
-func (m *SqlResultMock) RowsAffected() (i1 int64, err error) {
-	mm_atomic.AddUint64(&m.beforeRowsAffectedCounter, 1)
-	defer mm_atomic.AddUint64(&m.afterRowsAffectedCounter, 1)
+func (mmRowsAffected *SqlResultMock) RowsAffected() (i1 int64, err error) {
+	mm_atomic.AddUint64(&mmRowsAffected.beforeRowsAffectedCounter, 1)
+	defer mm_atomic.AddUint64(&mmRowsAffected.afterRowsAffectedCounter, 1)
 
-	if m.RowsAffectedMock.defaultExpectation != nil {
-		mm_atomic.AddUint64(&m.RowsAffectedMock.defaultExpectation.Counter, 1)
+	if mmRowsAffected.inspectFuncRowsAffected != nil {
+		mmRowsAffected.inspectFuncRowsAffected()
+	}
 
-		results := m.RowsAffectedMock.defaultExpectation.results
-		if results == nil {
-			m.t.Fatal("No results are set for the SqlResultMock.RowsAffected")
+	if mmRowsAffected.RowsAffectedMock.defaultExpectation != nil {
+		mm_atomic.AddUint64(&mmRowsAffected.RowsAffectedMock.defaultExpectation.Counter, 1)
+
+		mm_results := mmRowsAffected.RowsAffectedMock.defaultExpectation.results
+		if mm_results == nil {
+			mmRowsAffected.t.Fatal("No results are set for the SqlResultMock.RowsAffected")
 		}
-		return (*results).i1, (*results).err
+		return (*mm_results).i1, (*mm_results).err
 	}
-	if m.funcRowsAffected != nil {
-		return m.funcRowsAffected()
+	if mmRowsAffected.funcRowsAffected != nil {
+		return mmRowsAffected.funcRowsAffected()
 	}
-	m.t.Fatalf("Unexpected call to SqlResultMock.RowsAffected.")
+	mmRowsAffected.t.Fatalf("Unexpected call to SqlResultMock.RowsAffected.")
 	return
 }
 
 // RowsAffectedAfterCounter returns a count of finished SqlResultMock.RowsAffected invocations
-func (m *SqlResultMock) RowsAffectedAfterCounter() uint64 {
-	return mm_atomic.LoadUint64(&m.afterRowsAffectedCounter)
+func (mmRowsAffected *SqlResultMock) RowsAffectedAfterCounter() uint64 {
+	return mm_atomic.LoadUint64(&mmRowsAffected.afterRowsAffectedCounter)
 }
 
 // RowsAffectedBeforeCounter returns a count of SqlResultMock.RowsAffected invocations
-func (m *SqlResultMock) RowsAffectedBeforeCounter() uint64 {
-	return mm_atomic.LoadUint64(&m.beforeRowsAffectedCounter)
+func (mmRowsAffected *SqlResultMock) RowsAffectedBeforeCounter() uint64 {
+	return mm_atomic.LoadUint64(&mmRowsAffected.beforeRowsAffectedCounter)
 }
 
 // MinimockRowsAffectedDone returns true if the count of the RowsAffected invocations corresponds

@@ -5,10 +5,11 @@ package libsql
 import (
 	"context"
 	"database/sql"
+	"sync"
 	mm_atomic "sync/atomic"
 	mm_time "time"
 
-	"github.com/gojuno/minimock"
+	"github.com/gojuno/minimock/v3"
 )
 
 // DatabaseMock implements Database
@@ -16,41 +17,49 @@ type DatabaseMock struct {
 	t minimock.Tester
 
 	funcClose          func() (err error)
+	inspectFuncClose   func()
 	afterCloseCounter  uint64
 	beforeCloseCounter uint64
 	CloseMock          mDatabaseMockClose
 
 	funcPrepared          func(ctx context.Context, sql string, work func(Statement) error) (err error)
+	inspectFuncPrepared   func(ctx context.Context, sql string, work func(Statement) error)
 	afterPreparedCounter  uint64
 	beforePreparedCounter uint64
 	PreparedMock          mDatabaseMockPrepared
 
 	funcScan          func(ctx context.Context, scanner RowScanner, sql string, args ...interface{}) (err error)
+	inspectFuncScan   func(ctx context.Context, scanner RowScanner, sql string, args ...interface{})
 	afterScanCounter  uint64
 	beforeScanCounter uint64
 	ScanMock          mDatabaseMockScan
 
 	funcScanOne          func(ctx context.Context, scanner RowScanner, sql string, args ...interface{}) (err error)
+	inspectFuncScanOne   func(ctx context.Context, scanner RowScanner, sql string, args ...interface{})
 	afterScanOneCounter  uint64
 	beforeScanOneCounter uint64
 	ScanOneMock          mDatabaseMockScanOne
 
 	funcTransaction          func(ctx context.Context, work func(Transaction) error) (err error)
+	inspectFuncTransaction   func(ctx context.Context, work func(Transaction) error)
 	afterTransactionCounter  uint64
 	beforeTransactionCounter uint64
 	TransactionMock          mDatabaseMockTransaction
 
 	funcUpdate          func(ctx context.Context, sql string, args ...interface{}) (r1 sql.Result, err error)
+	inspectFuncUpdate   func(ctx context.Context, sql string, args ...interface{})
 	afterUpdateCounter  uint64
 	beforeUpdateCounter uint64
 	UpdateMock          mDatabaseMockUpdate
 
 	funcUpdateAndGetLastInsertID          func(ctx context.Context, sql string, args ...interface{}) (i1 int64, err error)
+	inspectFuncUpdateAndGetLastInsertID   func(ctx context.Context, sql string, args ...interface{})
 	afterUpdateAndGetLastInsertIDCounter  uint64
 	beforeUpdateAndGetLastInsertIDCounter uint64
 	UpdateAndGetLastInsertIDMock          mDatabaseMockUpdateAndGetLastInsertID
 
 	funcUpdateAndGetRowsAffected          func(ctx context.Context, sql string, args ...interface{}) (i1 int64, err error)
+	inspectFuncUpdateAndGetRowsAffected   func(ctx context.Context, sql string, args ...interface{})
 	afterUpdateAndGetRowsAffectedCounter  uint64
 	beforeUpdateAndGetRowsAffectedCounter uint64
 	UpdateAndGetRowsAffectedMock          mDatabaseMockUpdateAndGetRowsAffected
@@ -62,14 +71,29 @@ func NewDatabaseMock(t minimock.Tester) *DatabaseMock {
 	if controller, ok := t.(minimock.MockController); ok {
 		controller.RegisterMocker(m)
 	}
+
 	m.CloseMock = mDatabaseMockClose{mock: m}
+
 	m.PreparedMock = mDatabaseMockPrepared{mock: m}
+	m.PreparedMock.callArgs = []*DatabaseMockPreparedParams{}
+
 	m.ScanMock = mDatabaseMockScan{mock: m}
+	m.ScanMock.callArgs = []*DatabaseMockScanParams{}
+
 	m.ScanOneMock = mDatabaseMockScanOne{mock: m}
+	m.ScanOneMock.callArgs = []*DatabaseMockScanOneParams{}
+
 	m.TransactionMock = mDatabaseMockTransaction{mock: m}
+	m.TransactionMock.callArgs = []*DatabaseMockTransactionParams{}
+
 	m.UpdateMock = mDatabaseMockUpdate{mock: m}
+	m.UpdateMock.callArgs = []*DatabaseMockUpdateParams{}
+
 	m.UpdateAndGetLastInsertIDMock = mDatabaseMockUpdateAndGetLastInsertID{mock: m}
+	m.UpdateAndGetLastInsertIDMock.callArgs = []*DatabaseMockUpdateAndGetLastInsertIDParams{}
+
 	m.UpdateAndGetRowsAffectedMock = mDatabaseMockUpdateAndGetRowsAffected{mock: m}
+	m.UpdateAndGetRowsAffectedMock.callArgs = []*DatabaseMockUpdateAndGetRowsAffectedParams{}
 
 	return m
 }
@@ -94,74 +118,89 @@ type DatabaseMockCloseResults struct {
 }
 
 // Expect sets up expected params for Database.Close
-func (m *mDatabaseMockClose) Expect() *mDatabaseMockClose {
-	if m.mock.funcClose != nil {
-		m.mock.t.Fatalf("DatabaseMock.Close mock is already set by Set")
+func (mmClose *mDatabaseMockClose) Expect() *mDatabaseMockClose {
+	if mmClose.mock.funcClose != nil {
+		mmClose.mock.t.Fatalf("DatabaseMock.Close mock is already set by Set")
 	}
 
-	if m.defaultExpectation == nil {
-		m.defaultExpectation = &DatabaseMockCloseExpectation{}
+	if mmClose.defaultExpectation == nil {
+		mmClose.defaultExpectation = &DatabaseMockCloseExpectation{}
 	}
 
-	return m
+	return mmClose
+}
+
+// Inspect accepts an inspector function that has same arguments as the Database.Close
+func (mmClose *mDatabaseMockClose) Inspect(f func()) *mDatabaseMockClose {
+	if mmClose.mock.inspectFuncClose != nil {
+		mmClose.mock.t.Fatalf("Inspect function is already set for DatabaseMock.Close")
+	}
+
+	mmClose.mock.inspectFuncClose = f
+
+	return mmClose
 }
 
 // Return sets up results that will be returned by Database.Close
-func (m *mDatabaseMockClose) Return(err error) *DatabaseMock {
-	if m.mock.funcClose != nil {
-		m.mock.t.Fatalf("DatabaseMock.Close mock is already set by Set")
+func (mmClose *mDatabaseMockClose) Return(err error) *DatabaseMock {
+	if mmClose.mock.funcClose != nil {
+		mmClose.mock.t.Fatalf("DatabaseMock.Close mock is already set by Set")
 	}
 
-	if m.defaultExpectation == nil {
-		m.defaultExpectation = &DatabaseMockCloseExpectation{mock: m.mock}
+	if mmClose.defaultExpectation == nil {
+		mmClose.defaultExpectation = &DatabaseMockCloseExpectation{mock: mmClose.mock}
 	}
-	m.defaultExpectation.results = &DatabaseMockCloseResults{err}
-	return m.mock
+	mmClose.defaultExpectation.results = &DatabaseMockCloseResults{err}
+	return mmClose.mock
 }
 
 //Set uses given function f to mock the Database.Close method
-func (m *mDatabaseMockClose) Set(f func() (err error)) *DatabaseMock {
-	if m.defaultExpectation != nil {
-		m.mock.t.Fatalf("Default expectation is already set for the Database.Close method")
+func (mmClose *mDatabaseMockClose) Set(f func() (err error)) *DatabaseMock {
+	if mmClose.defaultExpectation != nil {
+		mmClose.mock.t.Fatalf("Default expectation is already set for the Database.Close method")
 	}
 
-	if len(m.expectations) > 0 {
-		m.mock.t.Fatalf("Some expectations are already set for the Database.Close method")
+	if len(mmClose.expectations) > 0 {
+		mmClose.mock.t.Fatalf("Some expectations are already set for the Database.Close method")
 	}
 
-	m.mock.funcClose = f
-	return m.mock
+	mmClose.mock.funcClose = f
+	return mmClose.mock
 }
 
 // Close implements Database
-func (m *DatabaseMock) Close() (err error) {
-	mm_atomic.AddUint64(&m.beforeCloseCounter, 1)
-	defer mm_atomic.AddUint64(&m.afterCloseCounter, 1)
+func (mmClose *DatabaseMock) Close() (err error) {
+	mm_atomic.AddUint64(&mmClose.beforeCloseCounter, 1)
+	defer mm_atomic.AddUint64(&mmClose.afterCloseCounter, 1)
 
-	if m.CloseMock.defaultExpectation != nil {
-		mm_atomic.AddUint64(&m.CloseMock.defaultExpectation.Counter, 1)
+	if mmClose.inspectFuncClose != nil {
+		mmClose.inspectFuncClose()
+	}
 
-		results := m.CloseMock.defaultExpectation.results
-		if results == nil {
-			m.t.Fatal("No results are set for the DatabaseMock.Close")
+	if mmClose.CloseMock.defaultExpectation != nil {
+		mm_atomic.AddUint64(&mmClose.CloseMock.defaultExpectation.Counter, 1)
+
+		mm_results := mmClose.CloseMock.defaultExpectation.results
+		if mm_results == nil {
+			mmClose.t.Fatal("No results are set for the DatabaseMock.Close")
 		}
-		return (*results).err
+		return (*mm_results).err
 	}
-	if m.funcClose != nil {
-		return m.funcClose()
+	if mmClose.funcClose != nil {
+		return mmClose.funcClose()
 	}
-	m.t.Fatalf("Unexpected call to DatabaseMock.Close.")
+	mmClose.t.Fatalf("Unexpected call to DatabaseMock.Close.")
 	return
 }
 
 // CloseAfterCounter returns a count of finished DatabaseMock.Close invocations
-func (m *DatabaseMock) CloseAfterCounter() uint64 {
-	return mm_atomic.LoadUint64(&m.afterCloseCounter)
+func (mmClose *DatabaseMock) CloseAfterCounter() uint64 {
+	return mm_atomic.LoadUint64(&mmClose.afterCloseCounter)
 }
 
 // CloseBeforeCounter returns a count of DatabaseMock.Close invocations
-func (m *DatabaseMock) CloseBeforeCounter() uint64 {
-	return mm_atomic.LoadUint64(&m.beforeCloseCounter)
+func (mmClose *DatabaseMock) CloseBeforeCounter() uint64 {
+	return mm_atomic.LoadUint64(&mmClose.beforeCloseCounter)
 }
 
 // MinimockCloseDone returns true if the count of the Close invocations corresponds
@@ -206,6 +245,9 @@ type mDatabaseMockPrepared struct {
 	mock               *DatabaseMock
 	defaultExpectation *DatabaseMockPreparedExpectation
 	expectations       []*DatabaseMockPreparedExpectation
+
+	callArgs []*DatabaseMockPreparedParams
+	mutex    sync.RWMutex
 }
 
 // DatabaseMockPreparedExpectation specifies expectation struct of the Database.Prepared
@@ -229,64 +271,75 @@ type DatabaseMockPreparedResults struct {
 }
 
 // Expect sets up expected params for Database.Prepared
-func (m *mDatabaseMockPrepared) Expect(ctx context.Context, sql string, work func(Statement) error) *mDatabaseMockPrepared {
-	if m.mock.funcPrepared != nil {
-		m.mock.t.Fatalf("DatabaseMock.Prepared mock is already set by Set")
+func (mmPrepared *mDatabaseMockPrepared) Expect(ctx context.Context, sql string, work func(Statement) error) *mDatabaseMockPrepared {
+	if mmPrepared.mock.funcPrepared != nil {
+		mmPrepared.mock.t.Fatalf("DatabaseMock.Prepared mock is already set by Set")
 	}
 
-	if m.defaultExpectation == nil {
-		m.defaultExpectation = &DatabaseMockPreparedExpectation{}
+	if mmPrepared.defaultExpectation == nil {
+		mmPrepared.defaultExpectation = &DatabaseMockPreparedExpectation{}
 	}
 
-	m.defaultExpectation.params = &DatabaseMockPreparedParams{ctx, sql, work}
-	for _, e := range m.expectations {
-		if minimock.Equal(e.params, m.defaultExpectation.params) {
-			m.mock.t.Fatalf("Expectation set by When has same params: %#v", *m.defaultExpectation.params)
+	mmPrepared.defaultExpectation.params = &DatabaseMockPreparedParams{ctx, sql, work}
+	for _, e := range mmPrepared.expectations {
+		if minimock.Equal(e.params, mmPrepared.defaultExpectation.params) {
+			mmPrepared.mock.t.Fatalf("Expectation set by When has same params: %#v", *mmPrepared.defaultExpectation.params)
 		}
 	}
 
-	return m
+	return mmPrepared
+}
+
+// Inspect accepts an inspector function that has same arguments as the Database.Prepared
+func (mmPrepared *mDatabaseMockPrepared) Inspect(f func(ctx context.Context, sql string, work func(Statement) error)) *mDatabaseMockPrepared {
+	if mmPrepared.mock.inspectFuncPrepared != nil {
+		mmPrepared.mock.t.Fatalf("Inspect function is already set for DatabaseMock.Prepared")
+	}
+
+	mmPrepared.mock.inspectFuncPrepared = f
+
+	return mmPrepared
 }
 
 // Return sets up results that will be returned by Database.Prepared
-func (m *mDatabaseMockPrepared) Return(err error) *DatabaseMock {
-	if m.mock.funcPrepared != nil {
-		m.mock.t.Fatalf("DatabaseMock.Prepared mock is already set by Set")
+func (mmPrepared *mDatabaseMockPrepared) Return(err error) *DatabaseMock {
+	if mmPrepared.mock.funcPrepared != nil {
+		mmPrepared.mock.t.Fatalf("DatabaseMock.Prepared mock is already set by Set")
 	}
 
-	if m.defaultExpectation == nil {
-		m.defaultExpectation = &DatabaseMockPreparedExpectation{mock: m.mock}
+	if mmPrepared.defaultExpectation == nil {
+		mmPrepared.defaultExpectation = &DatabaseMockPreparedExpectation{mock: mmPrepared.mock}
 	}
-	m.defaultExpectation.results = &DatabaseMockPreparedResults{err}
-	return m.mock
+	mmPrepared.defaultExpectation.results = &DatabaseMockPreparedResults{err}
+	return mmPrepared.mock
 }
 
 //Set uses given function f to mock the Database.Prepared method
-func (m *mDatabaseMockPrepared) Set(f func(ctx context.Context, sql string, work func(Statement) error) (err error)) *DatabaseMock {
-	if m.defaultExpectation != nil {
-		m.mock.t.Fatalf("Default expectation is already set for the Database.Prepared method")
+func (mmPrepared *mDatabaseMockPrepared) Set(f func(ctx context.Context, sql string, work func(Statement) error) (err error)) *DatabaseMock {
+	if mmPrepared.defaultExpectation != nil {
+		mmPrepared.mock.t.Fatalf("Default expectation is already set for the Database.Prepared method")
 	}
 
-	if len(m.expectations) > 0 {
-		m.mock.t.Fatalf("Some expectations are already set for the Database.Prepared method")
+	if len(mmPrepared.expectations) > 0 {
+		mmPrepared.mock.t.Fatalf("Some expectations are already set for the Database.Prepared method")
 	}
 
-	m.mock.funcPrepared = f
-	return m.mock
+	mmPrepared.mock.funcPrepared = f
+	return mmPrepared.mock
 }
 
 // When sets expectation for the Database.Prepared which will trigger the result defined by the following
 // Then helper
-func (m *mDatabaseMockPrepared) When(ctx context.Context, sql string, work func(Statement) error) *DatabaseMockPreparedExpectation {
-	if m.mock.funcPrepared != nil {
-		m.mock.t.Fatalf("DatabaseMock.Prepared mock is already set by Set")
+func (mmPrepared *mDatabaseMockPrepared) When(ctx context.Context, sql string, work func(Statement) error) *DatabaseMockPreparedExpectation {
+	if mmPrepared.mock.funcPrepared != nil {
+		mmPrepared.mock.t.Fatalf("DatabaseMock.Prepared mock is already set by Set")
 	}
 
 	expectation := &DatabaseMockPreparedExpectation{
-		mock:   m.mock,
+		mock:   mmPrepared.mock,
 		params: &DatabaseMockPreparedParams{ctx, sql, work},
 	}
-	m.expectations = append(m.expectations, expectation)
+	mmPrepared.expectations = append(mmPrepared.expectations, expectation)
 	return expectation
 }
 
@@ -297,46 +350,70 @@ func (e *DatabaseMockPreparedExpectation) Then(err error) *DatabaseMock {
 }
 
 // Prepared implements Database
-func (m *DatabaseMock) Prepared(ctx context.Context, sql string, work func(Statement) error) (err error) {
-	mm_atomic.AddUint64(&m.beforePreparedCounter, 1)
-	defer mm_atomic.AddUint64(&m.afterPreparedCounter, 1)
+func (mmPrepared *DatabaseMock) Prepared(ctx context.Context, sql string, work func(Statement) error) (err error) {
+	mm_atomic.AddUint64(&mmPrepared.beforePreparedCounter, 1)
+	defer mm_atomic.AddUint64(&mmPrepared.afterPreparedCounter, 1)
 
-	for _, e := range m.PreparedMock.expectations {
-		if minimock.Equal(*e.params, DatabaseMockPreparedParams{ctx, sql, work}) {
+	if mmPrepared.inspectFuncPrepared != nil {
+		mmPrepared.inspectFuncPrepared(ctx, sql, work)
+	}
+
+	mm_params := &DatabaseMockPreparedParams{ctx, sql, work}
+
+	// Record call args
+	mmPrepared.PreparedMock.mutex.Lock()
+	mmPrepared.PreparedMock.callArgs = append(mmPrepared.PreparedMock.callArgs, mm_params)
+	mmPrepared.PreparedMock.mutex.Unlock()
+
+	for _, e := range mmPrepared.PreparedMock.expectations {
+		if minimock.Equal(e.params, mm_params) {
 			mm_atomic.AddUint64(&e.Counter, 1)
 			return e.results.err
 		}
 	}
 
-	if m.PreparedMock.defaultExpectation != nil {
-		mm_atomic.AddUint64(&m.PreparedMock.defaultExpectation.Counter, 1)
-		want := m.PreparedMock.defaultExpectation.params
-		got := DatabaseMockPreparedParams{ctx, sql, work}
-		if want != nil && !minimock.Equal(*want, got) {
-			m.t.Errorf("DatabaseMock.Prepared got unexpected parameters, want: %#v, got: %#v%s\n", *want, got, minimock.Diff(*want, got))
+	if mmPrepared.PreparedMock.defaultExpectation != nil {
+		mm_atomic.AddUint64(&mmPrepared.PreparedMock.defaultExpectation.Counter, 1)
+		mm_want := mmPrepared.PreparedMock.defaultExpectation.params
+		mm_got := DatabaseMockPreparedParams{ctx, sql, work}
+		if mm_want != nil && !minimock.Equal(*mm_want, mm_got) {
+			mmPrepared.t.Errorf("DatabaseMock.Prepared got unexpected parameters, want: %#v, got: %#v%s\n", *mm_want, mm_got, minimock.Diff(*mm_want, mm_got))
 		}
 
-		results := m.PreparedMock.defaultExpectation.results
-		if results == nil {
-			m.t.Fatal("No results are set for the DatabaseMock.Prepared")
+		mm_results := mmPrepared.PreparedMock.defaultExpectation.results
+		if mm_results == nil {
+			mmPrepared.t.Fatal("No results are set for the DatabaseMock.Prepared")
 		}
-		return (*results).err
+		return (*mm_results).err
 	}
-	if m.funcPrepared != nil {
-		return m.funcPrepared(ctx, sql, work)
+	if mmPrepared.funcPrepared != nil {
+		return mmPrepared.funcPrepared(ctx, sql, work)
 	}
-	m.t.Fatalf("Unexpected call to DatabaseMock.Prepared. %v %v %v", ctx, sql, work)
+	mmPrepared.t.Fatalf("Unexpected call to DatabaseMock.Prepared. %v %v %v", ctx, sql, work)
 	return
 }
 
 // PreparedAfterCounter returns a count of finished DatabaseMock.Prepared invocations
-func (m *DatabaseMock) PreparedAfterCounter() uint64 {
-	return mm_atomic.LoadUint64(&m.afterPreparedCounter)
+func (mmPrepared *DatabaseMock) PreparedAfterCounter() uint64 {
+	return mm_atomic.LoadUint64(&mmPrepared.afterPreparedCounter)
 }
 
 // PreparedBeforeCounter returns a count of DatabaseMock.Prepared invocations
-func (m *DatabaseMock) PreparedBeforeCounter() uint64 {
-	return mm_atomic.LoadUint64(&m.beforePreparedCounter)
+func (mmPrepared *DatabaseMock) PreparedBeforeCounter() uint64 {
+	return mm_atomic.LoadUint64(&mmPrepared.beforePreparedCounter)
+}
+
+// Calls returns a list of arguments used in each call to DatabaseMock.Prepared.
+// The list is in the same order as the calls were made (i.e. recent calls have a higher index)
+func (mmPrepared *mDatabaseMockPrepared) Calls() []*DatabaseMockPreparedParams {
+	mmPrepared.mutex.RLock()
+
+	argCopy := make([]*DatabaseMockPreparedParams, len(mmPrepared.callArgs))
+	copy(argCopy, mmPrepared.callArgs)
+
+	mmPrepared.mutex.RUnlock()
+
+	return argCopy
 }
 
 // MinimockPreparedDone returns true if the count of the Prepared invocations corresponds
@@ -385,6 +462,9 @@ type mDatabaseMockScan struct {
 	mock               *DatabaseMock
 	defaultExpectation *DatabaseMockScanExpectation
 	expectations       []*DatabaseMockScanExpectation
+
+	callArgs []*DatabaseMockScanParams
+	mutex    sync.RWMutex
 }
 
 // DatabaseMockScanExpectation specifies expectation struct of the Database.Scan
@@ -409,64 +489,75 @@ type DatabaseMockScanResults struct {
 }
 
 // Expect sets up expected params for Database.Scan
-func (m *mDatabaseMockScan) Expect(ctx context.Context, scanner RowScanner, sql string, args ...interface{}) *mDatabaseMockScan {
-	if m.mock.funcScan != nil {
-		m.mock.t.Fatalf("DatabaseMock.Scan mock is already set by Set")
+func (mmScan *mDatabaseMockScan) Expect(ctx context.Context, scanner RowScanner, sql string, args ...interface{}) *mDatabaseMockScan {
+	if mmScan.mock.funcScan != nil {
+		mmScan.mock.t.Fatalf("DatabaseMock.Scan mock is already set by Set")
 	}
 
-	if m.defaultExpectation == nil {
-		m.defaultExpectation = &DatabaseMockScanExpectation{}
+	if mmScan.defaultExpectation == nil {
+		mmScan.defaultExpectation = &DatabaseMockScanExpectation{}
 	}
 
-	m.defaultExpectation.params = &DatabaseMockScanParams{ctx, scanner, sql, args}
-	for _, e := range m.expectations {
-		if minimock.Equal(e.params, m.defaultExpectation.params) {
-			m.mock.t.Fatalf("Expectation set by When has same params: %#v", *m.defaultExpectation.params)
+	mmScan.defaultExpectation.params = &DatabaseMockScanParams{ctx, scanner, sql, args}
+	for _, e := range mmScan.expectations {
+		if minimock.Equal(e.params, mmScan.defaultExpectation.params) {
+			mmScan.mock.t.Fatalf("Expectation set by When has same params: %#v", *mmScan.defaultExpectation.params)
 		}
 	}
 
-	return m
+	return mmScan
+}
+
+// Inspect accepts an inspector function that has same arguments as the Database.Scan
+func (mmScan *mDatabaseMockScan) Inspect(f func(ctx context.Context, scanner RowScanner, sql string, args ...interface{})) *mDatabaseMockScan {
+	if mmScan.mock.inspectFuncScan != nil {
+		mmScan.mock.t.Fatalf("Inspect function is already set for DatabaseMock.Scan")
+	}
+
+	mmScan.mock.inspectFuncScan = f
+
+	return mmScan
 }
 
 // Return sets up results that will be returned by Database.Scan
-func (m *mDatabaseMockScan) Return(err error) *DatabaseMock {
-	if m.mock.funcScan != nil {
-		m.mock.t.Fatalf("DatabaseMock.Scan mock is already set by Set")
+func (mmScan *mDatabaseMockScan) Return(err error) *DatabaseMock {
+	if mmScan.mock.funcScan != nil {
+		mmScan.mock.t.Fatalf("DatabaseMock.Scan mock is already set by Set")
 	}
 
-	if m.defaultExpectation == nil {
-		m.defaultExpectation = &DatabaseMockScanExpectation{mock: m.mock}
+	if mmScan.defaultExpectation == nil {
+		mmScan.defaultExpectation = &DatabaseMockScanExpectation{mock: mmScan.mock}
 	}
-	m.defaultExpectation.results = &DatabaseMockScanResults{err}
-	return m.mock
+	mmScan.defaultExpectation.results = &DatabaseMockScanResults{err}
+	return mmScan.mock
 }
 
 //Set uses given function f to mock the Database.Scan method
-func (m *mDatabaseMockScan) Set(f func(ctx context.Context, scanner RowScanner, sql string, args ...interface{}) (err error)) *DatabaseMock {
-	if m.defaultExpectation != nil {
-		m.mock.t.Fatalf("Default expectation is already set for the Database.Scan method")
+func (mmScan *mDatabaseMockScan) Set(f func(ctx context.Context, scanner RowScanner, sql string, args ...interface{}) (err error)) *DatabaseMock {
+	if mmScan.defaultExpectation != nil {
+		mmScan.mock.t.Fatalf("Default expectation is already set for the Database.Scan method")
 	}
 
-	if len(m.expectations) > 0 {
-		m.mock.t.Fatalf("Some expectations are already set for the Database.Scan method")
+	if len(mmScan.expectations) > 0 {
+		mmScan.mock.t.Fatalf("Some expectations are already set for the Database.Scan method")
 	}
 
-	m.mock.funcScan = f
-	return m.mock
+	mmScan.mock.funcScan = f
+	return mmScan.mock
 }
 
 // When sets expectation for the Database.Scan which will trigger the result defined by the following
 // Then helper
-func (m *mDatabaseMockScan) When(ctx context.Context, scanner RowScanner, sql string, args ...interface{}) *DatabaseMockScanExpectation {
-	if m.mock.funcScan != nil {
-		m.mock.t.Fatalf("DatabaseMock.Scan mock is already set by Set")
+func (mmScan *mDatabaseMockScan) When(ctx context.Context, scanner RowScanner, sql string, args ...interface{}) *DatabaseMockScanExpectation {
+	if mmScan.mock.funcScan != nil {
+		mmScan.mock.t.Fatalf("DatabaseMock.Scan mock is already set by Set")
 	}
 
 	expectation := &DatabaseMockScanExpectation{
-		mock:   m.mock,
+		mock:   mmScan.mock,
 		params: &DatabaseMockScanParams{ctx, scanner, sql, args},
 	}
-	m.expectations = append(m.expectations, expectation)
+	mmScan.expectations = append(mmScan.expectations, expectation)
 	return expectation
 }
 
@@ -477,46 +568,70 @@ func (e *DatabaseMockScanExpectation) Then(err error) *DatabaseMock {
 }
 
 // Scan implements Database
-func (m *DatabaseMock) Scan(ctx context.Context, scanner RowScanner, sql string, args ...interface{}) (err error) {
-	mm_atomic.AddUint64(&m.beforeScanCounter, 1)
-	defer mm_atomic.AddUint64(&m.afterScanCounter, 1)
+func (mmScan *DatabaseMock) Scan(ctx context.Context, scanner RowScanner, sql string, args ...interface{}) (err error) {
+	mm_atomic.AddUint64(&mmScan.beforeScanCounter, 1)
+	defer mm_atomic.AddUint64(&mmScan.afterScanCounter, 1)
 
-	for _, e := range m.ScanMock.expectations {
-		if minimock.Equal(*e.params, DatabaseMockScanParams{ctx, scanner, sql, args}) {
+	if mmScan.inspectFuncScan != nil {
+		mmScan.inspectFuncScan(ctx, scanner, sql, args...)
+	}
+
+	mm_params := &DatabaseMockScanParams{ctx, scanner, sql, args}
+
+	// Record call args
+	mmScan.ScanMock.mutex.Lock()
+	mmScan.ScanMock.callArgs = append(mmScan.ScanMock.callArgs, mm_params)
+	mmScan.ScanMock.mutex.Unlock()
+
+	for _, e := range mmScan.ScanMock.expectations {
+		if minimock.Equal(e.params, mm_params) {
 			mm_atomic.AddUint64(&e.Counter, 1)
 			return e.results.err
 		}
 	}
 
-	if m.ScanMock.defaultExpectation != nil {
-		mm_atomic.AddUint64(&m.ScanMock.defaultExpectation.Counter, 1)
-		want := m.ScanMock.defaultExpectation.params
-		got := DatabaseMockScanParams{ctx, scanner, sql, args}
-		if want != nil && !minimock.Equal(*want, got) {
-			m.t.Errorf("DatabaseMock.Scan got unexpected parameters, want: %#v, got: %#v%s\n", *want, got, minimock.Diff(*want, got))
+	if mmScan.ScanMock.defaultExpectation != nil {
+		mm_atomic.AddUint64(&mmScan.ScanMock.defaultExpectation.Counter, 1)
+		mm_want := mmScan.ScanMock.defaultExpectation.params
+		mm_got := DatabaseMockScanParams{ctx, scanner, sql, args}
+		if mm_want != nil && !minimock.Equal(*mm_want, mm_got) {
+			mmScan.t.Errorf("DatabaseMock.Scan got unexpected parameters, want: %#v, got: %#v%s\n", *mm_want, mm_got, minimock.Diff(*mm_want, mm_got))
 		}
 
-		results := m.ScanMock.defaultExpectation.results
-		if results == nil {
-			m.t.Fatal("No results are set for the DatabaseMock.Scan")
+		mm_results := mmScan.ScanMock.defaultExpectation.results
+		if mm_results == nil {
+			mmScan.t.Fatal("No results are set for the DatabaseMock.Scan")
 		}
-		return (*results).err
+		return (*mm_results).err
 	}
-	if m.funcScan != nil {
-		return m.funcScan(ctx, scanner, sql, args...)
+	if mmScan.funcScan != nil {
+		return mmScan.funcScan(ctx, scanner, sql, args...)
 	}
-	m.t.Fatalf("Unexpected call to DatabaseMock.Scan. %v %v %v %v", ctx, scanner, sql, args)
+	mmScan.t.Fatalf("Unexpected call to DatabaseMock.Scan. %v %v %v %v", ctx, scanner, sql, args)
 	return
 }
 
 // ScanAfterCounter returns a count of finished DatabaseMock.Scan invocations
-func (m *DatabaseMock) ScanAfterCounter() uint64 {
-	return mm_atomic.LoadUint64(&m.afterScanCounter)
+func (mmScan *DatabaseMock) ScanAfterCounter() uint64 {
+	return mm_atomic.LoadUint64(&mmScan.afterScanCounter)
 }
 
 // ScanBeforeCounter returns a count of DatabaseMock.Scan invocations
-func (m *DatabaseMock) ScanBeforeCounter() uint64 {
-	return mm_atomic.LoadUint64(&m.beforeScanCounter)
+func (mmScan *DatabaseMock) ScanBeforeCounter() uint64 {
+	return mm_atomic.LoadUint64(&mmScan.beforeScanCounter)
+}
+
+// Calls returns a list of arguments used in each call to DatabaseMock.Scan.
+// The list is in the same order as the calls were made (i.e. recent calls have a higher index)
+func (mmScan *mDatabaseMockScan) Calls() []*DatabaseMockScanParams {
+	mmScan.mutex.RLock()
+
+	argCopy := make([]*DatabaseMockScanParams, len(mmScan.callArgs))
+	copy(argCopy, mmScan.callArgs)
+
+	mmScan.mutex.RUnlock()
+
+	return argCopy
 }
 
 // MinimockScanDone returns true if the count of the Scan invocations corresponds
@@ -565,6 +680,9 @@ type mDatabaseMockScanOne struct {
 	mock               *DatabaseMock
 	defaultExpectation *DatabaseMockScanOneExpectation
 	expectations       []*DatabaseMockScanOneExpectation
+
+	callArgs []*DatabaseMockScanOneParams
+	mutex    sync.RWMutex
 }
 
 // DatabaseMockScanOneExpectation specifies expectation struct of the Database.ScanOne
@@ -589,64 +707,75 @@ type DatabaseMockScanOneResults struct {
 }
 
 // Expect sets up expected params for Database.ScanOne
-func (m *mDatabaseMockScanOne) Expect(ctx context.Context, scanner RowScanner, sql string, args ...interface{}) *mDatabaseMockScanOne {
-	if m.mock.funcScanOne != nil {
-		m.mock.t.Fatalf("DatabaseMock.ScanOne mock is already set by Set")
+func (mmScanOne *mDatabaseMockScanOne) Expect(ctx context.Context, scanner RowScanner, sql string, args ...interface{}) *mDatabaseMockScanOne {
+	if mmScanOne.mock.funcScanOne != nil {
+		mmScanOne.mock.t.Fatalf("DatabaseMock.ScanOne mock is already set by Set")
 	}
 
-	if m.defaultExpectation == nil {
-		m.defaultExpectation = &DatabaseMockScanOneExpectation{}
+	if mmScanOne.defaultExpectation == nil {
+		mmScanOne.defaultExpectation = &DatabaseMockScanOneExpectation{}
 	}
 
-	m.defaultExpectation.params = &DatabaseMockScanOneParams{ctx, scanner, sql, args}
-	for _, e := range m.expectations {
-		if minimock.Equal(e.params, m.defaultExpectation.params) {
-			m.mock.t.Fatalf("Expectation set by When has same params: %#v", *m.defaultExpectation.params)
+	mmScanOne.defaultExpectation.params = &DatabaseMockScanOneParams{ctx, scanner, sql, args}
+	for _, e := range mmScanOne.expectations {
+		if minimock.Equal(e.params, mmScanOne.defaultExpectation.params) {
+			mmScanOne.mock.t.Fatalf("Expectation set by When has same params: %#v", *mmScanOne.defaultExpectation.params)
 		}
 	}
 
-	return m
+	return mmScanOne
+}
+
+// Inspect accepts an inspector function that has same arguments as the Database.ScanOne
+func (mmScanOne *mDatabaseMockScanOne) Inspect(f func(ctx context.Context, scanner RowScanner, sql string, args ...interface{})) *mDatabaseMockScanOne {
+	if mmScanOne.mock.inspectFuncScanOne != nil {
+		mmScanOne.mock.t.Fatalf("Inspect function is already set for DatabaseMock.ScanOne")
+	}
+
+	mmScanOne.mock.inspectFuncScanOne = f
+
+	return mmScanOne
 }
 
 // Return sets up results that will be returned by Database.ScanOne
-func (m *mDatabaseMockScanOne) Return(err error) *DatabaseMock {
-	if m.mock.funcScanOne != nil {
-		m.mock.t.Fatalf("DatabaseMock.ScanOne mock is already set by Set")
+func (mmScanOne *mDatabaseMockScanOne) Return(err error) *DatabaseMock {
+	if mmScanOne.mock.funcScanOne != nil {
+		mmScanOne.mock.t.Fatalf("DatabaseMock.ScanOne mock is already set by Set")
 	}
 
-	if m.defaultExpectation == nil {
-		m.defaultExpectation = &DatabaseMockScanOneExpectation{mock: m.mock}
+	if mmScanOne.defaultExpectation == nil {
+		mmScanOne.defaultExpectation = &DatabaseMockScanOneExpectation{mock: mmScanOne.mock}
 	}
-	m.defaultExpectation.results = &DatabaseMockScanOneResults{err}
-	return m.mock
+	mmScanOne.defaultExpectation.results = &DatabaseMockScanOneResults{err}
+	return mmScanOne.mock
 }
 
 //Set uses given function f to mock the Database.ScanOne method
-func (m *mDatabaseMockScanOne) Set(f func(ctx context.Context, scanner RowScanner, sql string, args ...interface{}) (err error)) *DatabaseMock {
-	if m.defaultExpectation != nil {
-		m.mock.t.Fatalf("Default expectation is already set for the Database.ScanOne method")
+func (mmScanOne *mDatabaseMockScanOne) Set(f func(ctx context.Context, scanner RowScanner, sql string, args ...interface{}) (err error)) *DatabaseMock {
+	if mmScanOne.defaultExpectation != nil {
+		mmScanOne.mock.t.Fatalf("Default expectation is already set for the Database.ScanOne method")
 	}
 
-	if len(m.expectations) > 0 {
-		m.mock.t.Fatalf("Some expectations are already set for the Database.ScanOne method")
+	if len(mmScanOne.expectations) > 0 {
+		mmScanOne.mock.t.Fatalf("Some expectations are already set for the Database.ScanOne method")
 	}
 
-	m.mock.funcScanOne = f
-	return m.mock
+	mmScanOne.mock.funcScanOne = f
+	return mmScanOne.mock
 }
 
 // When sets expectation for the Database.ScanOne which will trigger the result defined by the following
 // Then helper
-func (m *mDatabaseMockScanOne) When(ctx context.Context, scanner RowScanner, sql string, args ...interface{}) *DatabaseMockScanOneExpectation {
-	if m.mock.funcScanOne != nil {
-		m.mock.t.Fatalf("DatabaseMock.ScanOne mock is already set by Set")
+func (mmScanOne *mDatabaseMockScanOne) When(ctx context.Context, scanner RowScanner, sql string, args ...interface{}) *DatabaseMockScanOneExpectation {
+	if mmScanOne.mock.funcScanOne != nil {
+		mmScanOne.mock.t.Fatalf("DatabaseMock.ScanOne mock is already set by Set")
 	}
 
 	expectation := &DatabaseMockScanOneExpectation{
-		mock:   m.mock,
+		mock:   mmScanOne.mock,
 		params: &DatabaseMockScanOneParams{ctx, scanner, sql, args},
 	}
-	m.expectations = append(m.expectations, expectation)
+	mmScanOne.expectations = append(mmScanOne.expectations, expectation)
 	return expectation
 }
 
@@ -657,46 +786,70 @@ func (e *DatabaseMockScanOneExpectation) Then(err error) *DatabaseMock {
 }
 
 // ScanOne implements Database
-func (m *DatabaseMock) ScanOne(ctx context.Context, scanner RowScanner, sql string, args ...interface{}) (err error) {
-	mm_atomic.AddUint64(&m.beforeScanOneCounter, 1)
-	defer mm_atomic.AddUint64(&m.afterScanOneCounter, 1)
+func (mmScanOne *DatabaseMock) ScanOne(ctx context.Context, scanner RowScanner, sql string, args ...interface{}) (err error) {
+	mm_atomic.AddUint64(&mmScanOne.beforeScanOneCounter, 1)
+	defer mm_atomic.AddUint64(&mmScanOne.afterScanOneCounter, 1)
 
-	for _, e := range m.ScanOneMock.expectations {
-		if minimock.Equal(*e.params, DatabaseMockScanOneParams{ctx, scanner, sql, args}) {
+	if mmScanOne.inspectFuncScanOne != nil {
+		mmScanOne.inspectFuncScanOne(ctx, scanner, sql, args...)
+	}
+
+	mm_params := &DatabaseMockScanOneParams{ctx, scanner, sql, args}
+
+	// Record call args
+	mmScanOne.ScanOneMock.mutex.Lock()
+	mmScanOne.ScanOneMock.callArgs = append(mmScanOne.ScanOneMock.callArgs, mm_params)
+	mmScanOne.ScanOneMock.mutex.Unlock()
+
+	for _, e := range mmScanOne.ScanOneMock.expectations {
+		if minimock.Equal(e.params, mm_params) {
 			mm_atomic.AddUint64(&e.Counter, 1)
 			return e.results.err
 		}
 	}
 
-	if m.ScanOneMock.defaultExpectation != nil {
-		mm_atomic.AddUint64(&m.ScanOneMock.defaultExpectation.Counter, 1)
-		want := m.ScanOneMock.defaultExpectation.params
-		got := DatabaseMockScanOneParams{ctx, scanner, sql, args}
-		if want != nil && !minimock.Equal(*want, got) {
-			m.t.Errorf("DatabaseMock.ScanOne got unexpected parameters, want: %#v, got: %#v%s\n", *want, got, minimock.Diff(*want, got))
+	if mmScanOne.ScanOneMock.defaultExpectation != nil {
+		mm_atomic.AddUint64(&mmScanOne.ScanOneMock.defaultExpectation.Counter, 1)
+		mm_want := mmScanOne.ScanOneMock.defaultExpectation.params
+		mm_got := DatabaseMockScanOneParams{ctx, scanner, sql, args}
+		if mm_want != nil && !minimock.Equal(*mm_want, mm_got) {
+			mmScanOne.t.Errorf("DatabaseMock.ScanOne got unexpected parameters, want: %#v, got: %#v%s\n", *mm_want, mm_got, minimock.Diff(*mm_want, mm_got))
 		}
 
-		results := m.ScanOneMock.defaultExpectation.results
-		if results == nil {
-			m.t.Fatal("No results are set for the DatabaseMock.ScanOne")
+		mm_results := mmScanOne.ScanOneMock.defaultExpectation.results
+		if mm_results == nil {
+			mmScanOne.t.Fatal("No results are set for the DatabaseMock.ScanOne")
 		}
-		return (*results).err
+		return (*mm_results).err
 	}
-	if m.funcScanOne != nil {
-		return m.funcScanOne(ctx, scanner, sql, args...)
+	if mmScanOne.funcScanOne != nil {
+		return mmScanOne.funcScanOne(ctx, scanner, sql, args...)
 	}
-	m.t.Fatalf("Unexpected call to DatabaseMock.ScanOne. %v %v %v %v", ctx, scanner, sql, args)
+	mmScanOne.t.Fatalf("Unexpected call to DatabaseMock.ScanOne. %v %v %v %v", ctx, scanner, sql, args)
 	return
 }
 
 // ScanOneAfterCounter returns a count of finished DatabaseMock.ScanOne invocations
-func (m *DatabaseMock) ScanOneAfterCounter() uint64 {
-	return mm_atomic.LoadUint64(&m.afterScanOneCounter)
+func (mmScanOne *DatabaseMock) ScanOneAfterCounter() uint64 {
+	return mm_atomic.LoadUint64(&mmScanOne.afterScanOneCounter)
 }
 
 // ScanOneBeforeCounter returns a count of DatabaseMock.ScanOne invocations
-func (m *DatabaseMock) ScanOneBeforeCounter() uint64 {
-	return mm_atomic.LoadUint64(&m.beforeScanOneCounter)
+func (mmScanOne *DatabaseMock) ScanOneBeforeCounter() uint64 {
+	return mm_atomic.LoadUint64(&mmScanOne.beforeScanOneCounter)
+}
+
+// Calls returns a list of arguments used in each call to DatabaseMock.ScanOne.
+// The list is in the same order as the calls were made (i.e. recent calls have a higher index)
+func (mmScanOne *mDatabaseMockScanOne) Calls() []*DatabaseMockScanOneParams {
+	mmScanOne.mutex.RLock()
+
+	argCopy := make([]*DatabaseMockScanOneParams, len(mmScanOne.callArgs))
+	copy(argCopy, mmScanOne.callArgs)
+
+	mmScanOne.mutex.RUnlock()
+
+	return argCopy
 }
 
 // MinimockScanOneDone returns true if the count of the ScanOne invocations corresponds
@@ -745,6 +898,9 @@ type mDatabaseMockTransaction struct {
 	mock               *DatabaseMock
 	defaultExpectation *DatabaseMockTransactionExpectation
 	expectations       []*DatabaseMockTransactionExpectation
+
+	callArgs []*DatabaseMockTransactionParams
+	mutex    sync.RWMutex
 }
 
 // DatabaseMockTransactionExpectation specifies expectation struct of the Database.Transaction
@@ -767,64 +923,75 @@ type DatabaseMockTransactionResults struct {
 }
 
 // Expect sets up expected params for Database.Transaction
-func (m *mDatabaseMockTransaction) Expect(ctx context.Context, work func(Transaction) error) *mDatabaseMockTransaction {
-	if m.mock.funcTransaction != nil {
-		m.mock.t.Fatalf("DatabaseMock.Transaction mock is already set by Set")
+func (mmTransaction *mDatabaseMockTransaction) Expect(ctx context.Context, work func(Transaction) error) *mDatabaseMockTransaction {
+	if mmTransaction.mock.funcTransaction != nil {
+		mmTransaction.mock.t.Fatalf("DatabaseMock.Transaction mock is already set by Set")
 	}
 
-	if m.defaultExpectation == nil {
-		m.defaultExpectation = &DatabaseMockTransactionExpectation{}
+	if mmTransaction.defaultExpectation == nil {
+		mmTransaction.defaultExpectation = &DatabaseMockTransactionExpectation{}
 	}
 
-	m.defaultExpectation.params = &DatabaseMockTransactionParams{ctx, work}
-	for _, e := range m.expectations {
-		if minimock.Equal(e.params, m.defaultExpectation.params) {
-			m.mock.t.Fatalf("Expectation set by When has same params: %#v", *m.defaultExpectation.params)
+	mmTransaction.defaultExpectation.params = &DatabaseMockTransactionParams{ctx, work}
+	for _, e := range mmTransaction.expectations {
+		if minimock.Equal(e.params, mmTransaction.defaultExpectation.params) {
+			mmTransaction.mock.t.Fatalf("Expectation set by When has same params: %#v", *mmTransaction.defaultExpectation.params)
 		}
 	}
 
-	return m
+	return mmTransaction
+}
+
+// Inspect accepts an inspector function that has same arguments as the Database.Transaction
+func (mmTransaction *mDatabaseMockTransaction) Inspect(f func(ctx context.Context, work func(Transaction) error)) *mDatabaseMockTransaction {
+	if mmTransaction.mock.inspectFuncTransaction != nil {
+		mmTransaction.mock.t.Fatalf("Inspect function is already set for DatabaseMock.Transaction")
+	}
+
+	mmTransaction.mock.inspectFuncTransaction = f
+
+	return mmTransaction
 }
 
 // Return sets up results that will be returned by Database.Transaction
-func (m *mDatabaseMockTransaction) Return(err error) *DatabaseMock {
-	if m.mock.funcTransaction != nil {
-		m.mock.t.Fatalf("DatabaseMock.Transaction mock is already set by Set")
+func (mmTransaction *mDatabaseMockTransaction) Return(err error) *DatabaseMock {
+	if mmTransaction.mock.funcTransaction != nil {
+		mmTransaction.mock.t.Fatalf("DatabaseMock.Transaction mock is already set by Set")
 	}
 
-	if m.defaultExpectation == nil {
-		m.defaultExpectation = &DatabaseMockTransactionExpectation{mock: m.mock}
+	if mmTransaction.defaultExpectation == nil {
+		mmTransaction.defaultExpectation = &DatabaseMockTransactionExpectation{mock: mmTransaction.mock}
 	}
-	m.defaultExpectation.results = &DatabaseMockTransactionResults{err}
-	return m.mock
+	mmTransaction.defaultExpectation.results = &DatabaseMockTransactionResults{err}
+	return mmTransaction.mock
 }
 
 //Set uses given function f to mock the Database.Transaction method
-func (m *mDatabaseMockTransaction) Set(f func(ctx context.Context, work func(Transaction) error) (err error)) *DatabaseMock {
-	if m.defaultExpectation != nil {
-		m.mock.t.Fatalf("Default expectation is already set for the Database.Transaction method")
+func (mmTransaction *mDatabaseMockTransaction) Set(f func(ctx context.Context, work func(Transaction) error) (err error)) *DatabaseMock {
+	if mmTransaction.defaultExpectation != nil {
+		mmTransaction.mock.t.Fatalf("Default expectation is already set for the Database.Transaction method")
 	}
 
-	if len(m.expectations) > 0 {
-		m.mock.t.Fatalf("Some expectations are already set for the Database.Transaction method")
+	if len(mmTransaction.expectations) > 0 {
+		mmTransaction.mock.t.Fatalf("Some expectations are already set for the Database.Transaction method")
 	}
 
-	m.mock.funcTransaction = f
-	return m.mock
+	mmTransaction.mock.funcTransaction = f
+	return mmTransaction.mock
 }
 
 // When sets expectation for the Database.Transaction which will trigger the result defined by the following
 // Then helper
-func (m *mDatabaseMockTransaction) When(ctx context.Context, work func(Transaction) error) *DatabaseMockTransactionExpectation {
-	if m.mock.funcTransaction != nil {
-		m.mock.t.Fatalf("DatabaseMock.Transaction mock is already set by Set")
+func (mmTransaction *mDatabaseMockTransaction) When(ctx context.Context, work func(Transaction) error) *DatabaseMockTransactionExpectation {
+	if mmTransaction.mock.funcTransaction != nil {
+		mmTransaction.mock.t.Fatalf("DatabaseMock.Transaction mock is already set by Set")
 	}
 
 	expectation := &DatabaseMockTransactionExpectation{
-		mock:   m.mock,
+		mock:   mmTransaction.mock,
 		params: &DatabaseMockTransactionParams{ctx, work},
 	}
-	m.expectations = append(m.expectations, expectation)
+	mmTransaction.expectations = append(mmTransaction.expectations, expectation)
 	return expectation
 }
 
@@ -835,46 +1002,70 @@ func (e *DatabaseMockTransactionExpectation) Then(err error) *DatabaseMock {
 }
 
 // Transaction implements Database
-func (m *DatabaseMock) Transaction(ctx context.Context, work func(Transaction) error) (err error) {
-	mm_atomic.AddUint64(&m.beforeTransactionCounter, 1)
-	defer mm_atomic.AddUint64(&m.afterTransactionCounter, 1)
+func (mmTransaction *DatabaseMock) Transaction(ctx context.Context, work func(Transaction) error) (err error) {
+	mm_atomic.AddUint64(&mmTransaction.beforeTransactionCounter, 1)
+	defer mm_atomic.AddUint64(&mmTransaction.afterTransactionCounter, 1)
 
-	for _, e := range m.TransactionMock.expectations {
-		if minimock.Equal(*e.params, DatabaseMockTransactionParams{ctx, work}) {
+	if mmTransaction.inspectFuncTransaction != nil {
+		mmTransaction.inspectFuncTransaction(ctx, work)
+	}
+
+	mm_params := &DatabaseMockTransactionParams{ctx, work}
+
+	// Record call args
+	mmTransaction.TransactionMock.mutex.Lock()
+	mmTransaction.TransactionMock.callArgs = append(mmTransaction.TransactionMock.callArgs, mm_params)
+	mmTransaction.TransactionMock.mutex.Unlock()
+
+	for _, e := range mmTransaction.TransactionMock.expectations {
+		if minimock.Equal(e.params, mm_params) {
 			mm_atomic.AddUint64(&e.Counter, 1)
 			return e.results.err
 		}
 	}
 
-	if m.TransactionMock.defaultExpectation != nil {
-		mm_atomic.AddUint64(&m.TransactionMock.defaultExpectation.Counter, 1)
-		want := m.TransactionMock.defaultExpectation.params
-		got := DatabaseMockTransactionParams{ctx, work}
-		if want != nil && !minimock.Equal(*want, got) {
-			m.t.Errorf("DatabaseMock.Transaction got unexpected parameters, want: %#v, got: %#v%s\n", *want, got, minimock.Diff(*want, got))
+	if mmTransaction.TransactionMock.defaultExpectation != nil {
+		mm_atomic.AddUint64(&mmTransaction.TransactionMock.defaultExpectation.Counter, 1)
+		mm_want := mmTransaction.TransactionMock.defaultExpectation.params
+		mm_got := DatabaseMockTransactionParams{ctx, work}
+		if mm_want != nil && !minimock.Equal(*mm_want, mm_got) {
+			mmTransaction.t.Errorf("DatabaseMock.Transaction got unexpected parameters, want: %#v, got: %#v%s\n", *mm_want, mm_got, minimock.Diff(*mm_want, mm_got))
 		}
 
-		results := m.TransactionMock.defaultExpectation.results
-		if results == nil {
-			m.t.Fatal("No results are set for the DatabaseMock.Transaction")
+		mm_results := mmTransaction.TransactionMock.defaultExpectation.results
+		if mm_results == nil {
+			mmTransaction.t.Fatal("No results are set for the DatabaseMock.Transaction")
 		}
-		return (*results).err
+		return (*mm_results).err
 	}
-	if m.funcTransaction != nil {
-		return m.funcTransaction(ctx, work)
+	if mmTransaction.funcTransaction != nil {
+		return mmTransaction.funcTransaction(ctx, work)
 	}
-	m.t.Fatalf("Unexpected call to DatabaseMock.Transaction. %v %v", ctx, work)
+	mmTransaction.t.Fatalf("Unexpected call to DatabaseMock.Transaction. %v %v", ctx, work)
 	return
 }
 
 // TransactionAfterCounter returns a count of finished DatabaseMock.Transaction invocations
-func (m *DatabaseMock) TransactionAfterCounter() uint64 {
-	return mm_atomic.LoadUint64(&m.afterTransactionCounter)
+func (mmTransaction *DatabaseMock) TransactionAfterCounter() uint64 {
+	return mm_atomic.LoadUint64(&mmTransaction.afterTransactionCounter)
 }
 
 // TransactionBeforeCounter returns a count of DatabaseMock.Transaction invocations
-func (m *DatabaseMock) TransactionBeforeCounter() uint64 {
-	return mm_atomic.LoadUint64(&m.beforeTransactionCounter)
+func (mmTransaction *DatabaseMock) TransactionBeforeCounter() uint64 {
+	return mm_atomic.LoadUint64(&mmTransaction.beforeTransactionCounter)
+}
+
+// Calls returns a list of arguments used in each call to DatabaseMock.Transaction.
+// The list is in the same order as the calls were made (i.e. recent calls have a higher index)
+func (mmTransaction *mDatabaseMockTransaction) Calls() []*DatabaseMockTransactionParams {
+	mmTransaction.mutex.RLock()
+
+	argCopy := make([]*DatabaseMockTransactionParams, len(mmTransaction.callArgs))
+	copy(argCopy, mmTransaction.callArgs)
+
+	mmTransaction.mutex.RUnlock()
+
+	return argCopy
 }
 
 // MinimockTransactionDone returns true if the count of the Transaction invocations corresponds
@@ -923,6 +1114,9 @@ type mDatabaseMockUpdate struct {
 	mock               *DatabaseMock
 	defaultExpectation *DatabaseMockUpdateExpectation
 	expectations       []*DatabaseMockUpdateExpectation
+
+	callArgs []*DatabaseMockUpdateParams
+	mutex    sync.RWMutex
 }
 
 // DatabaseMockUpdateExpectation specifies expectation struct of the Database.Update
@@ -947,64 +1141,75 @@ type DatabaseMockUpdateResults struct {
 }
 
 // Expect sets up expected params for Database.Update
-func (m *mDatabaseMockUpdate) Expect(ctx context.Context, sql string, args ...interface{}) *mDatabaseMockUpdate {
-	if m.mock.funcUpdate != nil {
-		m.mock.t.Fatalf("DatabaseMock.Update mock is already set by Set")
+func (mmUpdate *mDatabaseMockUpdate) Expect(ctx context.Context, sql string, args ...interface{}) *mDatabaseMockUpdate {
+	if mmUpdate.mock.funcUpdate != nil {
+		mmUpdate.mock.t.Fatalf("DatabaseMock.Update mock is already set by Set")
 	}
 
-	if m.defaultExpectation == nil {
-		m.defaultExpectation = &DatabaseMockUpdateExpectation{}
+	if mmUpdate.defaultExpectation == nil {
+		mmUpdate.defaultExpectation = &DatabaseMockUpdateExpectation{}
 	}
 
-	m.defaultExpectation.params = &DatabaseMockUpdateParams{ctx, sql, args}
-	for _, e := range m.expectations {
-		if minimock.Equal(e.params, m.defaultExpectation.params) {
-			m.mock.t.Fatalf("Expectation set by When has same params: %#v", *m.defaultExpectation.params)
+	mmUpdate.defaultExpectation.params = &DatabaseMockUpdateParams{ctx, sql, args}
+	for _, e := range mmUpdate.expectations {
+		if minimock.Equal(e.params, mmUpdate.defaultExpectation.params) {
+			mmUpdate.mock.t.Fatalf("Expectation set by When has same params: %#v", *mmUpdate.defaultExpectation.params)
 		}
 	}
 
-	return m
+	return mmUpdate
+}
+
+// Inspect accepts an inspector function that has same arguments as the Database.Update
+func (mmUpdate *mDatabaseMockUpdate) Inspect(f func(ctx context.Context, sql string, args ...interface{})) *mDatabaseMockUpdate {
+	if mmUpdate.mock.inspectFuncUpdate != nil {
+		mmUpdate.mock.t.Fatalf("Inspect function is already set for DatabaseMock.Update")
+	}
+
+	mmUpdate.mock.inspectFuncUpdate = f
+
+	return mmUpdate
 }
 
 // Return sets up results that will be returned by Database.Update
-func (m *mDatabaseMockUpdate) Return(r1 sql.Result, err error) *DatabaseMock {
-	if m.mock.funcUpdate != nil {
-		m.mock.t.Fatalf("DatabaseMock.Update mock is already set by Set")
+func (mmUpdate *mDatabaseMockUpdate) Return(r1 sql.Result, err error) *DatabaseMock {
+	if mmUpdate.mock.funcUpdate != nil {
+		mmUpdate.mock.t.Fatalf("DatabaseMock.Update mock is already set by Set")
 	}
 
-	if m.defaultExpectation == nil {
-		m.defaultExpectation = &DatabaseMockUpdateExpectation{mock: m.mock}
+	if mmUpdate.defaultExpectation == nil {
+		mmUpdate.defaultExpectation = &DatabaseMockUpdateExpectation{mock: mmUpdate.mock}
 	}
-	m.defaultExpectation.results = &DatabaseMockUpdateResults{r1, err}
-	return m.mock
+	mmUpdate.defaultExpectation.results = &DatabaseMockUpdateResults{r1, err}
+	return mmUpdate.mock
 }
 
 //Set uses given function f to mock the Database.Update method
-func (m *mDatabaseMockUpdate) Set(f func(ctx context.Context, sql string, args ...interface{}) (r1 sql.Result, err error)) *DatabaseMock {
-	if m.defaultExpectation != nil {
-		m.mock.t.Fatalf("Default expectation is already set for the Database.Update method")
+func (mmUpdate *mDatabaseMockUpdate) Set(f func(ctx context.Context, sql string, args ...interface{}) (r1 sql.Result, err error)) *DatabaseMock {
+	if mmUpdate.defaultExpectation != nil {
+		mmUpdate.mock.t.Fatalf("Default expectation is already set for the Database.Update method")
 	}
 
-	if len(m.expectations) > 0 {
-		m.mock.t.Fatalf("Some expectations are already set for the Database.Update method")
+	if len(mmUpdate.expectations) > 0 {
+		mmUpdate.mock.t.Fatalf("Some expectations are already set for the Database.Update method")
 	}
 
-	m.mock.funcUpdate = f
-	return m.mock
+	mmUpdate.mock.funcUpdate = f
+	return mmUpdate.mock
 }
 
 // When sets expectation for the Database.Update which will trigger the result defined by the following
 // Then helper
-func (m *mDatabaseMockUpdate) When(ctx context.Context, sql string, args ...interface{}) *DatabaseMockUpdateExpectation {
-	if m.mock.funcUpdate != nil {
-		m.mock.t.Fatalf("DatabaseMock.Update mock is already set by Set")
+func (mmUpdate *mDatabaseMockUpdate) When(ctx context.Context, sql string, args ...interface{}) *DatabaseMockUpdateExpectation {
+	if mmUpdate.mock.funcUpdate != nil {
+		mmUpdate.mock.t.Fatalf("DatabaseMock.Update mock is already set by Set")
 	}
 
 	expectation := &DatabaseMockUpdateExpectation{
-		mock:   m.mock,
+		mock:   mmUpdate.mock,
 		params: &DatabaseMockUpdateParams{ctx, sql, args},
 	}
-	m.expectations = append(m.expectations, expectation)
+	mmUpdate.expectations = append(mmUpdate.expectations, expectation)
 	return expectation
 }
 
@@ -1015,46 +1220,70 @@ func (e *DatabaseMockUpdateExpectation) Then(r1 sql.Result, err error) *Database
 }
 
 // Update implements Database
-func (m *DatabaseMock) Update(ctx context.Context, sql string, args ...interface{}) (r1 sql.Result, err error) {
-	mm_atomic.AddUint64(&m.beforeUpdateCounter, 1)
-	defer mm_atomic.AddUint64(&m.afterUpdateCounter, 1)
+func (mmUpdate *DatabaseMock) Update(ctx context.Context, sql string, args ...interface{}) (r1 sql.Result, err error) {
+	mm_atomic.AddUint64(&mmUpdate.beforeUpdateCounter, 1)
+	defer mm_atomic.AddUint64(&mmUpdate.afterUpdateCounter, 1)
 
-	for _, e := range m.UpdateMock.expectations {
-		if minimock.Equal(*e.params, DatabaseMockUpdateParams{ctx, sql, args}) {
+	if mmUpdate.inspectFuncUpdate != nil {
+		mmUpdate.inspectFuncUpdate(ctx, sql, args...)
+	}
+
+	mm_params := &DatabaseMockUpdateParams{ctx, sql, args}
+
+	// Record call args
+	mmUpdate.UpdateMock.mutex.Lock()
+	mmUpdate.UpdateMock.callArgs = append(mmUpdate.UpdateMock.callArgs, mm_params)
+	mmUpdate.UpdateMock.mutex.Unlock()
+
+	for _, e := range mmUpdate.UpdateMock.expectations {
+		if minimock.Equal(e.params, mm_params) {
 			mm_atomic.AddUint64(&e.Counter, 1)
 			return e.results.r1, e.results.err
 		}
 	}
 
-	if m.UpdateMock.defaultExpectation != nil {
-		mm_atomic.AddUint64(&m.UpdateMock.defaultExpectation.Counter, 1)
-		want := m.UpdateMock.defaultExpectation.params
-		got := DatabaseMockUpdateParams{ctx, sql, args}
-		if want != nil && !minimock.Equal(*want, got) {
-			m.t.Errorf("DatabaseMock.Update got unexpected parameters, want: %#v, got: %#v%s\n", *want, got, minimock.Diff(*want, got))
+	if mmUpdate.UpdateMock.defaultExpectation != nil {
+		mm_atomic.AddUint64(&mmUpdate.UpdateMock.defaultExpectation.Counter, 1)
+		mm_want := mmUpdate.UpdateMock.defaultExpectation.params
+		mm_got := DatabaseMockUpdateParams{ctx, sql, args}
+		if mm_want != nil && !minimock.Equal(*mm_want, mm_got) {
+			mmUpdate.t.Errorf("DatabaseMock.Update got unexpected parameters, want: %#v, got: %#v%s\n", *mm_want, mm_got, minimock.Diff(*mm_want, mm_got))
 		}
 
-		results := m.UpdateMock.defaultExpectation.results
-		if results == nil {
-			m.t.Fatal("No results are set for the DatabaseMock.Update")
+		mm_results := mmUpdate.UpdateMock.defaultExpectation.results
+		if mm_results == nil {
+			mmUpdate.t.Fatal("No results are set for the DatabaseMock.Update")
 		}
-		return (*results).r1, (*results).err
+		return (*mm_results).r1, (*mm_results).err
 	}
-	if m.funcUpdate != nil {
-		return m.funcUpdate(ctx, sql, args...)
+	if mmUpdate.funcUpdate != nil {
+		return mmUpdate.funcUpdate(ctx, sql, args...)
 	}
-	m.t.Fatalf("Unexpected call to DatabaseMock.Update. %v %v %v", ctx, sql, args)
+	mmUpdate.t.Fatalf("Unexpected call to DatabaseMock.Update. %v %v %v", ctx, sql, args)
 	return
 }
 
 // UpdateAfterCounter returns a count of finished DatabaseMock.Update invocations
-func (m *DatabaseMock) UpdateAfterCounter() uint64 {
-	return mm_atomic.LoadUint64(&m.afterUpdateCounter)
+func (mmUpdate *DatabaseMock) UpdateAfterCounter() uint64 {
+	return mm_atomic.LoadUint64(&mmUpdate.afterUpdateCounter)
 }
 
 // UpdateBeforeCounter returns a count of DatabaseMock.Update invocations
-func (m *DatabaseMock) UpdateBeforeCounter() uint64 {
-	return mm_atomic.LoadUint64(&m.beforeUpdateCounter)
+func (mmUpdate *DatabaseMock) UpdateBeforeCounter() uint64 {
+	return mm_atomic.LoadUint64(&mmUpdate.beforeUpdateCounter)
+}
+
+// Calls returns a list of arguments used in each call to DatabaseMock.Update.
+// The list is in the same order as the calls were made (i.e. recent calls have a higher index)
+func (mmUpdate *mDatabaseMockUpdate) Calls() []*DatabaseMockUpdateParams {
+	mmUpdate.mutex.RLock()
+
+	argCopy := make([]*DatabaseMockUpdateParams, len(mmUpdate.callArgs))
+	copy(argCopy, mmUpdate.callArgs)
+
+	mmUpdate.mutex.RUnlock()
+
+	return argCopy
 }
 
 // MinimockUpdateDone returns true if the count of the Update invocations corresponds
@@ -1103,6 +1332,9 @@ type mDatabaseMockUpdateAndGetLastInsertID struct {
 	mock               *DatabaseMock
 	defaultExpectation *DatabaseMockUpdateAndGetLastInsertIDExpectation
 	expectations       []*DatabaseMockUpdateAndGetLastInsertIDExpectation
+
+	callArgs []*DatabaseMockUpdateAndGetLastInsertIDParams
+	mutex    sync.RWMutex
 }
 
 // DatabaseMockUpdateAndGetLastInsertIDExpectation specifies expectation struct of the Database.UpdateAndGetLastInsertID
@@ -1127,64 +1359,75 @@ type DatabaseMockUpdateAndGetLastInsertIDResults struct {
 }
 
 // Expect sets up expected params for Database.UpdateAndGetLastInsertID
-func (m *mDatabaseMockUpdateAndGetLastInsertID) Expect(ctx context.Context, sql string, args ...interface{}) *mDatabaseMockUpdateAndGetLastInsertID {
-	if m.mock.funcUpdateAndGetLastInsertID != nil {
-		m.mock.t.Fatalf("DatabaseMock.UpdateAndGetLastInsertID mock is already set by Set")
+func (mmUpdateAndGetLastInsertID *mDatabaseMockUpdateAndGetLastInsertID) Expect(ctx context.Context, sql string, args ...interface{}) *mDatabaseMockUpdateAndGetLastInsertID {
+	if mmUpdateAndGetLastInsertID.mock.funcUpdateAndGetLastInsertID != nil {
+		mmUpdateAndGetLastInsertID.mock.t.Fatalf("DatabaseMock.UpdateAndGetLastInsertID mock is already set by Set")
 	}
 
-	if m.defaultExpectation == nil {
-		m.defaultExpectation = &DatabaseMockUpdateAndGetLastInsertIDExpectation{}
+	if mmUpdateAndGetLastInsertID.defaultExpectation == nil {
+		mmUpdateAndGetLastInsertID.defaultExpectation = &DatabaseMockUpdateAndGetLastInsertIDExpectation{}
 	}
 
-	m.defaultExpectation.params = &DatabaseMockUpdateAndGetLastInsertIDParams{ctx, sql, args}
-	for _, e := range m.expectations {
-		if minimock.Equal(e.params, m.defaultExpectation.params) {
-			m.mock.t.Fatalf("Expectation set by When has same params: %#v", *m.defaultExpectation.params)
+	mmUpdateAndGetLastInsertID.defaultExpectation.params = &DatabaseMockUpdateAndGetLastInsertIDParams{ctx, sql, args}
+	for _, e := range mmUpdateAndGetLastInsertID.expectations {
+		if minimock.Equal(e.params, mmUpdateAndGetLastInsertID.defaultExpectation.params) {
+			mmUpdateAndGetLastInsertID.mock.t.Fatalf("Expectation set by When has same params: %#v", *mmUpdateAndGetLastInsertID.defaultExpectation.params)
 		}
 	}
 
-	return m
+	return mmUpdateAndGetLastInsertID
+}
+
+// Inspect accepts an inspector function that has same arguments as the Database.UpdateAndGetLastInsertID
+func (mmUpdateAndGetLastInsertID *mDatabaseMockUpdateAndGetLastInsertID) Inspect(f func(ctx context.Context, sql string, args ...interface{})) *mDatabaseMockUpdateAndGetLastInsertID {
+	if mmUpdateAndGetLastInsertID.mock.inspectFuncUpdateAndGetLastInsertID != nil {
+		mmUpdateAndGetLastInsertID.mock.t.Fatalf("Inspect function is already set for DatabaseMock.UpdateAndGetLastInsertID")
+	}
+
+	mmUpdateAndGetLastInsertID.mock.inspectFuncUpdateAndGetLastInsertID = f
+
+	return mmUpdateAndGetLastInsertID
 }
 
 // Return sets up results that will be returned by Database.UpdateAndGetLastInsertID
-func (m *mDatabaseMockUpdateAndGetLastInsertID) Return(i1 int64, err error) *DatabaseMock {
-	if m.mock.funcUpdateAndGetLastInsertID != nil {
-		m.mock.t.Fatalf("DatabaseMock.UpdateAndGetLastInsertID mock is already set by Set")
+func (mmUpdateAndGetLastInsertID *mDatabaseMockUpdateAndGetLastInsertID) Return(i1 int64, err error) *DatabaseMock {
+	if mmUpdateAndGetLastInsertID.mock.funcUpdateAndGetLastInsertID != nil {
+		mmUpdateAndGetLastInsertID.mock.t.Fatalf("DatabaseMock.UpdateAndGetLastInsertID mock is already set by Set")
 	}
 
-	if m.defaultExpectation == nil {
-		m.defaultExpectation = &DatabaseMockUpdateAndGetLastInsertIDExpectation{mock: m.mock}
+	if mmUpdateAndGetLastInsertID.defaultExpectation == nil {
+		mmUpdateAndGetLastInsertID.defaultExpectation = &DatabaseMockUpdateAndGetLastInsertIDExpectation{mock: mmUpdateAndGetLastInsertID.mock}
 	}
-	m.defaultExpectation.results = &DatabaseMockUpdateAndGetLastInsertIDResults{i1, err}
-	return m.mock
+	mmUpdateAndGetLastInsertID.defaultExpectation.results = &DatabaseMockUpdateAndGetLastInsertIDResults{i1, err}
+	return mmUpdateAndGetLastInsertID.mock
 }
 
 //Set uses given function f to mock the Database.UpdateAndGetLastInsertID method
-func (m *mDatabaseMockUpdateAndGetLastInsertID) Set(f func(ctx context.Context, sql string, args ...interface{}) (i1 int64, err error)) *DatabaseMock {
-	if m.defaultExpectation != nil {
-		m.mock.t.Fatalf("Default expectation is already set for the Database.UpdateAndGetLastInsertID method")
+func (mmUpdateAndGetLastInsertID *mDatabaseMockUpdateAndGetLastInsertID) Set(f func(ctx context.Context, sql string, args ...interface{}) (i1 int64, err error)) *DatabaseMock {
+	if mmUpdateAndGetLastInsertID.defaultExpectation != nil {
+		mmUpdateAndGetLastInsertID.mock.t.Fatalf("Default expectation is already set for the Database.UpdateAndGetLastInsertID method")
 	}
 
-	if len(m.expectations) > 0 {
-		m.mock.t.Fatalf("Some expectations are already set for the Database.UpdateAndGetLastInsertID method")
+	if len(mmUpdateAndGetLastInsertID.expectations) > 0 {
+		mmUpdateAndGetLastInsertID.mock.t.Fatalf("Some expectations are already set for the Database.UpdateAndGetLastInsertID method")
 	}
 
-	m.mock.funcUpdateAndGetLastInsertID = f
-	return m.mock
+	mmUpdateAndGetLastInsertID.mock.funcUpdateAndGetLastInsertID = f
+	return mmUpdateAndGetLastInsertID.mock
 }
 
 // When sets expectation for the Database.UpdateAndGetLastInsertID which will trigger the result defined by the following
 // Then helper
-func (m *mDatabaseMockUpdateAndGetLastInsertID) When(ctx context.Context, sql string, args ...interface{}) *DatabaseMockUpdateAndGetLastInsertIDExpectation {
-	if m.mock.funcUpdateAndGetLastInsertID != nil {
-		m.mock.t.Fatalf("DatabaseMock.UpdateAndGetLastInsertID mock is already set by Set")
+func (mmUpdateAndGetLastInsertID *mDatabaseMockUpdateAndGetLastInsertID) When(ctx context.Context, sql string, args ...interface{}) *DatabaseMockUpdateAndGetLastInsertIDExpectation {
+	if mmUpdateAndGetLastInsertID.mock.funcUpdateAndGetLastInsertID != nil {
+		mmUpdateAndGetLastInsertID.mock.t.Fatalf("DatabaseMock.UpdateAndGetLastInsertID mock is already set by Set")
 	}
 
 	expectation := &DatabaseMockUpdateAndGetLastInsertIDExpectation{
-		mock:   m.mock,
+		mock:   mmUpdateAndGetLastInsertID.mock,
 		params: &DatabaseMockUpdateAndGetLastInsertIDParams{ctx, sql, args},
 	}
-	m.expectations = append(m.expectations, expectation)
+	mmUpdateAndGetLastInsertID.expectations = append(mmUpdateAndGetLastInsertID.expectations, expectation)
 	return expectation
 }
 
@@ -1195,46 +1438,70 @@ func (e *DatabaseMockUpdateAndGetLastInsertIDExpectation) Then(i1 int64, err err
 }
 
 // UpdateAndGetLastInsertID implements Database
-func (m *DatabaseMock) UpdateAndGetLastInsertID(ctx context.Context, sql string, args ...interface{}) (i1 int64, err error) {
-	mm_atomic.AddUint64(&m.beforeUpdateAndGetLastInsertIDCounter, 1)
-	defer mm_atomic.AddUint64(&m.afterUpdateAndGetLastInsertIDCounter, 1)
+func (mmUpdateAndGetLastInsertID *DatabaseMock) UpdateAndGetLastInsertID(ctx context.Context, sql string, args ...interface{}) (i1 int64, err error) {
+	mm_atomic.AddUint64(&mmUpdateAndGetLastInsertID.beforeUpdateAndGetLastInsertIDCounter, 1)
+	defer mm_atomic.AddUint64(&mmUpdateAndGetLastInsertID.afterUpdateAndGetLastInsertIDCounter, 1)
 
-	for _, e := range m.UpdateAndGetLastInsertIDMock.expectations {
-		if minimock.Equal(*e.params, DatabaseMockUpdateAndGetLastInsertIDParams{ctx, sql, args}) {
+	if mmUpdateAndGetLastInsertID.inspectFuncUpdateAndGetLastInsertID != nil {
+		mmUpdateAndGetLastInsertID.inspectFuncUpdateAndGetLastInsertID(ctx, sql, args...)
+	}
+
+	mm_params := &DatabaseMockUpdateAndGetLastInsertIDParams{ctx, sql, args}
+
+	// Record call args
+	mmUpdateAndGetLastInsertID.UpdateAndGetLastInsertIDMock.mutex.Lock()
+	mmUpdateAndGetLastInsertID.UpdateAndGetLastInsertIDMock.callArgs = append(mmUpdateAndGetLastInsertID.UpdateAndGetLastInsertIDMock.callArgs, mm_params)
+	mmUpdateAndGetLastInsertID.UpdateAndGetLastInsertIDMock.mutex.Unlock()
+
+	for _, e := range mmUpdateAndGetLastInsertID.UpdateAndGetLastInsertIDMock.expectations {
+		if minimock.Equal(e.params, mm_params) {
 			mm_atomic.AddUint64(&e.Counter, 1)
 			return e.results.i1, e.results.err
 		}
 	}
 
-	if m.UpdateAndGetLastInsertIDMock.defaultExpectation != nil {
-		mm_atomic.AddUint64(&m.UpdateAndGetLastInsertIDMock.defaultExpectation.Counter, 1)
-		want := m.UpdateAndGetLastInsertIDMock.defaultExpectation.params
-		got := DatabaseMockUpdateAndGetLastInsertIDParams{ctx, sql, args}
-		if want != nil && !minimock.Equal(*want, got) {
-			m.t.Errorf("DatabaseMock.UpdateAndGetLastInsertID got unexpected parameters, want: %#v, got: %#v%s\n", *want, got, minimock.Diff(*want, got))
+	if mmUpdateAndGetLastInsertID.UpdateAndGetLastInsertIDMock.defaultExpectation != nil {
+		mm_atomic.AddUint64(&mmUpdateAndGetLastInsertID.UpdateAndGetLastInsertIDMock.defaultExpectation.Counter, 1)
+		mm_want := mmUpdateAndGetLastInsertID.UpdateAndGetLastInsertIDMock.defaultExpectation.params
+		mm_got := DatabaseMockUpdateAndGetLastInsertIDParams{ctx, sql, args}
+		if mm_want != nil && !minimock.Equal(*mm_want, mm_got) {
+			mmUpdateAndGetLastInsertID.t.Errorf("DatabaseMock.UpdateAndGetLastInsertID got unexpected parameters, want: %#v, got: %#v%s\n", *mm_want, mm_got, minimock.Diff(*mm_want, mm_got))
 		}
 
-		results := m.UpdateAndGetLastInsertIDMock.defaultExpectation.results
-		if results == nil {
-			m.t.Fatal("No results are set for the DatabaseMock.UpdateAndGetLastInsertID")
+		mm_results := mmUpdateAndGetLastInsertID.UpdateAndGetLastInsertIDMock.defaultExpectation.results
+		if mm_results == nil {
+			mmUpdateAndGetLastInsertID.t.Fatal("No results are set for the DatabaseMock.UpdateAndGetLastInsertID")
 		}
-		return (*results).i1, (*results).err
+		return (*mm_results).i1, (*mm_results).err
 	}
-	if m.funcUpdateAndGetLastInsertID != nil {
-		return m.funcUpdateAndGetLastInsertID(ctx, sql, args...)
+	if mmUpdateAndGetLastInsertID.funcUpdateAndGetLastInsertID != nil {
+		return mmUpdateAndGetLastInsertID.funcUpdateAndGetLastInsertID(ctx, sql, args...)
 	}
-	m.t.Fatalf("Unexpected call to DatabaseMock.UpdateAndGetLastInsertID. %v %v %v", ctx, sql, args)
+	mmUpdateAndGetLastInsertID.t.Fatalf("Unexpected call to DatabaseMock.UpdateAndGetLastInsertID. %v %v %v", ctx, sql, args)
 	return
 }
 
 // UpdateAndGetLastInsertIDAfterCounter returns a count of finished DatabaseMock.UpdateAndGetLastInsertID invocations
-func (m *DatabaseMock) UpdateAndGetLastInsertIDAfterCounter() uint64 {
-	return mm_atomic.LoadUint64(&m.afterUpdateAndGetLastInsertIDCounter)
+func (mmUpdateAndGetLastInsertID *DatabaseMock) UpdateAndGetLastInsertIDAfterCounter() uint64 {
+	return mm_atomic.LoadUint64(&mmUpdateAndGetLastInsertID.afterUpdateAndGetLastInsertIDCounter)
 }
 
 // UpdateAndGetLastInsertIDBeforeCounter returns a count of DatabaseMock.UpdateAndGetLastInsertID invocations
-func (m *DatabaseMock) UpdateAndGetLastInsertIDBeforeCounter() uint64 {
-	return mm_atomic.LoadUint64(&m.beforeUpdateAndGetLastInsertIDCounter)
+func (mmUpdateAndGetLastInsertID *DatabaseMock) UpdateAndGetLastInsertIDBeforeCounter() uint64 {
+	return mm_atomic.LoadUint64(&mmUpdateAndGetLastInsertID.beforeUpdateAndGetLastInsertIDCounter)
+}
+
+// Calls returns a list of arguments used in each call to DatabaseMock.UpdateAndGetLastInsertID.
+// The list is in the same order as the calls were made (i.e. recent calls have a higher index)
+func (mmUpdateAndGetLastInsertID *mDatabaseMockUpdateAndGetLastInsertID) Calls() []*DatabaseMockUpdateAndGetLastInsertIDParams {
+	mmUpdateAndGetLastInsertID.mutex.RLock()
+
+	argCopy := make([]*DatabaseMockUpdateAndGetLastInsertIDParams, len(mmUpdateAndGetLastInsertID.callArgs))
+	copy(argCopy, mmUpdateAndGetLastInsertID.callArgs)
+
+	mmUpdateAndGetLastInsertID.mutex.RUnlock()
+
+	return argCopy
 }
 
 // MinimockUpdateAndGetLastInsertIDDone returns true if the count of the UpdateAndGetLastInsertID invocations corresponds
@@ -1283,6 +1550,9 @@ type mDatabaseMockUpdateAndGetRowsAffected struct {
 	mock               *DatabaseMock
 	defaultExpectation *DatabaseMockUpdateAndGetRowsAffectedExpectation
 	expectations       []*DatabaseMockUpdateAndGetRowsAffectedExpectation
+
+	callArgs []*DatabaseMockUpdateAndGetRowsAffectedParams
+	mutex    sync.RWMutex
 }
 
 // DatabaseMockUpdateAndGetRowsAffectedExpectation specifies expectation struct of the Database.UpdateAndGetRowsAffected
@@ -1307,64 +1577,75 @@ type DatabaseMockUpdateAndGetRowsAffectedResults struct {
 }
 
 // Expect sets up expected params for Database.UpdateAndGetRowsAffected
-func (m *mDatabaseMockUpdateAndGetRowsAffected) Expect(ctx context.Context, sql string, args ...interface{}) *mDatabaseMockUpdateAndGetRowsAffected {
-	if m.mock.funcUpdateAndGetRowsAffected != nil {
-		m.mock.t.Fatalf("DatabaseMock.UpdateAndGetRowsAffected mock is already set by Set")
+func (mmUpdateAndGetRowsAffected *mDatabaseMockUpdateAndGetRowsAffected) Expect(ctx context.Context, sql string, args ...interface{}) *mDatabaseMockUpdateAndGetRowsAffected {
+	if mmUpdateAndGetRowsAffected.mock.funcUpdateAndGetRowsAffected != nil {
+		mmUpdateAndGetRowsAffected.mock.t.Fatalf("DatabaseMock.UpdateAndGetRowsAffected mock is already set by Set")
 	}
 
-	if m.defaultExpectation == nil {
-		m.defaultExpectation = &DatabaseMockUpdateAndGetRowsAffectedExpectation{}
+	if mmUpdateAndGetRowsAffected.defaultExpectation == nil {
+		mmUpdateAndGetRowsAffected.defaultExpectation = &DatabaseMockUpdateAndGetRowsAffectedExpectation{}
 	}
 
-	m.defaultExpectation.params = &DatabaseMockUpdateAndGetRowsAffectedParams{ctx, sql, args}
-	for _, e := range m.expectations {
-		if minimock.Equal(e.params, m.defaultExpectation.params) {
-			m.mock.t.Fatalf("Expectation set by When has same params: %#v", *m.defaultExpectation.params)
+	mmUpdateAndGetRowsAffected.defaultExpectation.params = &DatabaseMockUpdateAndGetRowsAffectedParams{ctx, sql, args}
+	for _, e := range mmUpdateAndGetRowsAffected.expectations {
+		if minimock.Equal(e.params, mmUpdateAndGetRowsAffected.defaultExpectation.params) {
+			mmUpdateAndGetRowsAffected.mock.t.Fatalf("Expectation set by When has same params: %#v", *mmUpdateAndGetRowsAffected.defaultExpectation.params)
 		}
 	}
 
-	return m
+	return mmUpdateAndGetRowsAffected
+}
+
+// Inspect accepts an inspector function that has same arguments as the Database.UpdateAndGetRowsAffected
+func (mmUpdateAndGetRowsAffected *mDatabaseMockUpdateAndGetRowsAffected) Inspect(f func(ctx context.Context, sql string, args ...interface{})) *mDatabaseMockUpdateAndGetRowsAffected {
+	if mmUpdateAndGetRowsAffected.mock.inspectFuncUpdateAndGetRowsAffected != nil {
+		mmUpdateAndGetRowsAffected.mock.t.Fatalf("Inspect function is already set for DatabaseMock.UpdateAndGetRowsAffected")
+	}
+
+	mmUpdateAndGetRowsAffected.mock.inspectFuncUpdateAndGetRowsAffected = f
+
+	return mmUpdateAndGetRowsAffected
 }
 
 // Return sets up results that will be returned by Database.UpdateAndGetRowsAffected
-func (m *mDatabaseMockUpdateAndGetRowsAffected) Return(i1 int64, err error) *DatabaseMock {
-	if m.mock.funcUpdateAndGetRowsAffected != nil {
-		m.mock.t.Fatalf("DatabaseMock.UpdateAndGetRowsAffected mock is already set by Set")
+func (mmUpdateAndGetRowsAffected *mDatabaseMockUpdateAndGetRowsAffected) Return(i1 int64, err error) *DatabaseMock {
+	if mmUpdateAndGetRowsAffected.mock.funcUpdateAndGetRowsAffected != nil {
+		mmUpdateAndGetRowsAffected.mock.t.Fatalf("DatabaseMock.UpdateAndGetRowsAffected mock is already set by Set")
 	}
 
-	if m.defaultExpectation == nil {
-		m.defaultExpectation = &DatabaseMockUpdateAndGetRowsAffectedExpectation{mock: m.mock}
+	if mmUpdateAndGetRowsAffected.defaultExpectation == nil {
+		mmUpdateAndGetRowsAffected.defaultExpectation = &DatabaseMockUpdateAndGetRowsAffectedExpectation{mock: mmUpdateAndGetRowsAffected.mock}
 	}
-	m.defaultExpectation.results = &DatabaseMockUpdateAndGetRowsAffectedResults{i1, err}
-	return m.mock
+	mmUpdateAndGetRowsAffected.defaultExpectation.results = &DatabaseMockUpdateAndGetRowsAffectedResults{i1, err}
+	return mmUpdateAndGetRowsAffected.mock
 }
 
 //Set uses given function f to mock the Database.UpdateAndGetRowsAffected method
-func (m *mDatabaseMockUpdateAndGetRowsAffected) Set(f func(ctx context.Context, sql string, args ...interface{}) (i1 int64, err error)) *DatabaseMock {
-	if m.defaultExpectation != nil {
-		m.mock.t.Fatalf("Default expectation is already set for the Database.UpdateAndGetRowsAffected method")
+func (mmUpdateAndGetRowsAffected *mDatabaseMockUpdateAndGetRowsAffected) Set(f func(ctx context.Context, sql string, args ...interface{}) (i1 int64, err error)) *DatabaseMock {
+	if mmUpdateAndGetRowsAffected.defaultExpectation != nil {
+		mmUpdateAndGetRowsAffected.mock.t.Fatalf("Default expectation is already set for the Database.UpdateAndGetRowsAffected method")
 	}
 
-	if len(m.expectations) > 0 {
-		m.mock.t.Fatalf("Some expectations are already set for the Database.UpdateAndGetRowsAffected method")
+	if len(mmUpdateAndGetRowsAffected.expectations) > 0 {
+		mmUpdateAndGetRowsAffected.mock.t.Fatalf("Some expectations are already set for the Database.UpdateAndGetRowsAffected method")
 	}
 
-	m.mock.funcUpdateAndGetRowsAffected = f
-	return m.mock
+	mmUpdateAndGetRowsAffected.mock.funcUpdateAndGetRowsAffected = f
+	return mmUpdateAndGetRowsAffected.mock
 }
 
 // When sets expectation for the Database.UpdateAndGetRowsAffected which will trigger the result defined by the following
 // Then helper
-func (m *mDatabaseMockUpdateAndGetRowsAffected) When(ctx context.Context, sql string, args ...interface{}) *DatabaseMockUpdateAndGetRowsAffectedExpectation {
-	if m.mock.funcUpdateAndGetRowsAffected != nil {
-		m.mock.t.Fatalf("DatabaseMock.UpdateAndGetRowsAffected mock is already set by Set")
+func (mmUpdateAndGetRowsAffected *mDatabaseMockUpdateAndGetRowsAffected) When(ctx context.Context, sql string, args ...interface{}) *DatabaseMockUpdateAndGetRowsAffectedExpectation {
+	if mmUpdateAndGetRowsAffected.mock.funcUpdateAndGetRowsAffected != nil {
+		mmUpdateAndGetRowsAffected.mock.t.Fatalf("DatabaseMock.UpdateAndGetRowsAffected mock is already set by Set")
 	}
 
 	expectation := &DatabaseMockUpdateAndGetRowsAffectedExpectation{
-		mock:   m.mock,
+		mock:   mmUpdateAndGetRowsAffected.mock,
 		params: &DatabaseMockUpdateAndGetRowsAffectedParams{ctx, sql, args},
 	}
-	m.expectations = append(m.expectations, expectation)
+	mmUpdateAndGetRowsAffected.expectations = append(mmUpdateAndGetRowsAffected.expectations, expectation)
 	return expectation
 }
 
@@ -1375,46 +1656,70 @@ func (e *DatabaseMockUpdateAndGetRowsAffectedExpectation) Then(i1 int64, err err
 }
 
 // UpdateAndGetRowsAffected implements Database
-func (m *DatabaseMock) UpdateAndGetRowsAffected(ctx context.Context, sql string, args ...interface{}) (i1 int64, err error) {
-	mm_atomic.AddUint64(&m.beforeUpdateAndGetRowsAffectedCounter, 1)
-	defer mm_atomic.AddUint64(&m.afterUpdateAndGetRowsAffectedCounter, 1)
+func (mmUpdateAndGetRowsAffected *DatabaseMock) UpdateAndGetRowsAffected(ctx context.Context, sql string, args ...interface{}) (i1 int64, err error) {
+	mm_atomic.AddUint64(&mmUpdateAndGetRowsAffected.beforeUpdateAndGetRowsAffectedCounter, 1)
+	defer mm_atomic.AddUint64(&mmUpdateAndGetRowsAffected.afterUpdateAndGetRowsAffectedCounter, 1)
 
-	for _, e := range m.UpdateAndGetRowsAffectedMock.expectations {
-		if minimock.Equal(*e.params, DatabaseMockUpdateAndGetRowsAffectedParams{ctx, sql, args}) {
+	if mmUpdateAndGetRowsAffected.inspectFuncUpdateAndGetRowsAffected != nil {
+		mmUpdateAndGetRowsAffected.inspectFuncUpdateAndGetRowsAffected(ctx, sql, args...)
+	}
+
+	mm_params := &DatabaseMockUpdateAndGetRowsAffectedParams{ctx, sql, args}
+
+	// Record call args
+	mmUpdateAndGetRowsAffected.UpdateAndGetRowsAffectedMock.mutex.Lock()
+	mmUpdateAndGetRowsAffected.UpdateAndGetRowsAffectedMock.callArgs = append(mmUpdateAndGetRowsAffected.UpdateAndGetRowsAffectedMock.callArgs, mm_params)
+	mmUpdateAndGetRowsAffected.UpdateAndGetRowsAffectedMock.mutex.Unlock()
+
+	for _, e := range mmUpdateAndGetRowsAffected.UpdateAndGetRowsAffectedMock.expectations {
+		if minimock.Equal(e.params, mm_params) {
 			mm_atomic.AddUint64(&e.Counter, 1)
 			return e.results.i1, e.results.err
 		}
 	}
 
-	if m.UpdateAndGetRowsAffectedMock.defaultExpectation != nil {
-		mm_atomic.AddUint64(&m.UpdateAndGetRowsAffectedMock.defaultExpectation.Counter, 1)
-		want := m.UpdateAndGetRowsAffectedMock.defaultExpectation.params
-		got := DatabaseMockUpdateAndGetRowsAffectedParams{ctx, sql, args}
-		if want != nil && !minimock.Equal(*want, got) {
-			m.t.Errorf("DatabaseMock.UpdateAndGetRowsAffected got unexpected parameters, want: %#v, got: %#v%s\n", *want, got, minimock.Diff(*want, got))
+	if mmUpdateAndGetRowsAffected.UpdateAndGetRowsAffectedMock.defaultExpectation != nil {
+		mm_atomic.AddUint64(&mmUpdateAndGetRowsAffected.UpdateAndGetRowsAffectedMock.defaultExpectation.Counter, 1)
+		mm_want := mmUpdateAndGetRowsAffected.UpdateAndGetRowsAffectedMock.defaultExpectation.params
+		mm_got := DatabaseMockUpdateAndGetRowsAffectedParams{ctx, sql, args}
+		if mm_want != nil && !minimock.Equal(*mm_want, mm_got) {
+			mmUpdateAndGetRowsAffected.t.Errorf("DatabaseMock.UpdateAndGetRowsAffected got unexpected parameters, want: %#v, got: %#v%s\n", *mm_want, mm_got, minimock.Diff(*mm_want, mm_got))
 		}
 
-		results := m.UpdateAndGetRowsAffectedMock.defaultExpectation.results
-		if results == nil {
-			m.t.Fatal("No results are set for the DatabaseMock.UpdateAndGetRowsAffected")
+		mm_results := mmUpdateAndGetRowsAffected.UpdateAndGetRowsAffectedMock.defaultExpectation.results
+		if mm_results == nil {
+			mmUpdateAndGetRowsAffected.t.Fatal("No results are set for the DatabaseMock.UpdateAndGetRowsAffected")
 		}
-		return (*results).i1, (*results).err
+		return (*mm_results).i1, (*mm_results).err
 	}
-	if m.funcUpdateAndGetRowsAffected != nil {
-		return m.funcUpdateAndGetRowsAffected(ctx, sql, args...)
+	if mmUpdateAndGetRowsAffected.funcUpdateAndGetRowsAffected != nil {
+		return mmUpdateAndGetRowsAffected.funcUpdateAndGetRowsAffected(ctx, sql, args...)
 	}
-	m.t.Fatalf("Unexpected call to DatabaseMock.UpdateAndGetRowsAffected. %v %v %v", ctx, sql, args)
+	mmUpdateAndGetRowsAffected.t.Fatalf("Unexpected call to DatabaseMock.UpdateAndGetRowsAffected. %v %v %v", ctx, sql, args)
 	return
 }
 
 // UpdateAndGetRowsAffectedAfterCounter returns a count of finished DatabaseMock.UpdateAndGetRowsAffected invocations
-func (m *DatabaseMock) UpdateAndGetRowsAffectedAfterCounter() uint64 {
-	return mm_atomic.LoadUint64(&m.afterUpdateAndGetRowsAffectedCounter)
+func (mmUpdateAndGetRowsAffected *DatabaseMock) UpdateAndGetRowsAffectedAfterCounter() uint64 {
+	return mm_atomic.LoadUint64(&mmUpdateAndGetRowsAffected.afterUpdateAndGetRowsAffectedCounter)
 }
 
 // UpdateAndGetRowsAffectedBeforeCounter returns a count of DatabaseMock.UpdateAndGetRowsAffected invocations
-func (m *DatabaseMock) UpdateAndGetRowsAffectedBeforeCounter() uint64 {
-	return mm_atomic.LoadUint64(&m.beforeUpdateAndGetRowsAffectedCounter)
+func (mmUpdateAndGetRowsAffected *DatabaseMock) UpdateAndGetRowsAffectedBeforeCounter() uint64 {
+	return mm_atomic.LoadUint64(&mmUpdateAndGetRowsAffected.beforeUpdateAndGetRowsAffectedCounter)
+}
+
+// Calls returns a list of arguments used in each call to DatabaseMock.UpdateAndGetRowsAffected.
+// The list is in the same order as the calls were made (i.e. recent calls have a higher index)
+func (mmUpdateAndGetRowsAffected *mDatabaseMockUpdateAndGetRowsAffected) Calls() []*DatabaseMockUpdateAndGetRowsAffectedParams {
+	mmUpdateAndGetRowsAffected.mutex.RLock()
+
+	argCopy := make([]*DatabaseMockUpdateAndGetRowsAffectedParams, len(mmUpdateAndGetRowsAffected.callArgs))
+	copy(argCopy, mmUpdateAndGetRowsAffected.callArgs)
+
+	mmUpdateAndGetRowsAffected.mutex.RUnlock()
+
+	return argCopy
 }
 
 // MinimockUpdateAndGetRowsAffectedDone returns true if the count of the UpdateAndGetRowsAffected invocations corresponds

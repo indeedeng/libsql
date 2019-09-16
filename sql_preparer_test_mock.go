@@ -4,10 +4,11 @@ package libsql
 
 import (
 	"context"
+	"sync"
 	mm_atomic "sync/atomic"
 	mm_time "time"
 
-	"github.com/gojuno/minimock"
+	"github.com/gojuno/minimock/v3"
 )
 
 // SqlPreparerMock implements sqlPreparer
@@ -15,6 +16,7 @@ type SqlPreparerMock struct {
 	t minimock.Tester
 
 	funcPrepare          func(ctx context.Context, query string) (s1 sqlStmt, err error)
+	inspectFuncPrepare   func(ctx context.Context, query string)
 	afterPrepareCounter  uint64
 	beforePrepareCounter uint64
 	PrepareMock          mSqlPreparerMockPrepare
@@ -26,7 +28,9 @@ func NewSqlPreparerMock(t minimock.Tester) *SqlPreparerMock {
 	if controller, ok := t.(minimock.MockController); ok {
 		controller.RegisterMocker(m)
 	}
+
 	m.PrepareMock = mSqlPreparerMockPrepare{mock: m}
+	m.PrepareMock.callArgs = []*SqlPreparerMockPrepareParams{}
 
 	return m
 }
@@ -35,6 +39,9 @@ type mSqlPreparerMockPrepare struct {
 	mock               *SqlPreparerMock
 	defaultExpectation *SqlPreparerMockPrepareExpectation
 	expectations       []*SqlPreparerMockPrepareExpectation
+
+	callArgs []*SqlPreparerMockPrepareParams
+	mutex    sync.RWMutex
 }
 
 // SqlPreparerMockPrepareExpectation specifies expectation struct of the sqlPreparer.Prepare
@@ -58,64 +65,75 @@ type SqlPreparerMockPrepareResults struct {
 }
 
 // Expect sets up expected params for sqlPreparer.Prepare
-func (m *mSqlPreparerMockPrepare) Expect(ctx context.Context, query string) *mSqlPreparerMockPrepare {
-	if m.mock.funcPrepare != nil {
-		m.mock.t.Fatalf("SqlPreparerMock.Prepare mock is already set by Set")
+func (mmPrepare *mSqlPreparerMockPrepare) Expect(ctx context.Context, query string) *mSqlPreparerMockPrepare {
+	if mmPrepare.mock.funcPrepare != nil {
+		mmPrepare.mock.t.Fatalf("SqlPreparerMock.Prepare mock is already set by Set")
 	}
 
-	if m.defaultExpectation == nil {
-		m.defaultExpectation = &SqlPreparerMockPrepareExpectation{}
+	if mmPrepare.defaultExpectation == nil {
+		mmPrepare.defaultExpectation = &SqlPreparerMockPrepareExpectation{}
 	}
 
-	m.defaultExpectation.params = &SqlPreparerMockPrepareParams{ctx, query}
-	for _, e := range m.expectations {
-		if minimock.Equal(e.params, m.defaultExpectation.params) {
-			m.mock.t.Fatalf("Expectation set by When has same params: %#v", *m.defaultExpectation.params)
+	mmPrepare.defaultExpectation.params = &SqlPreparerMockPrepareParams{ctx, query}
+	for _, e := range mmPrepare.expectations {
+		if minimock.Equal(e.params, mmPrepare.defaultExpectation.params) {
+			mmPrepare.mock.t.Fatalf("Expectation set by When has same params: %#v", *mmPrepare.defaultExpectation.params)
 		}
 	}
 
-	return m
+	return mmPrepare
+}
+
+// Inspect accepts an inspector function that has same arguments as the sqlPreparer.Prepare
+func (mmPrepare *mSqlPreparerMockPrepare) Inspect(f func(ctx context.Context, query string)) *mSqlPreparerMockPrepare {
+	if mmPrepare.mock.inspectFuncPrepare != nil {
+		mmPrepare.mock.t.Fatalf("Inspect function is already set for SqlPreparerMock.Prepare")
+	}
+
+	mmPrepare.mock.inspectFuncPrepare = f
+
+	return mmPrepare
 }
 
 // Return sets up results that will be returned by sqlPreparer.Prepare
-func (m *mSqlPreparerMockPrepare) Return(s1 sqlStmt, err error) *SqlPreparerMock {
-	if m.mock.funcPrepare != nil {
-		m.mock.t.Fatalf("SqlPreparerMock.Prepare mock is already set by Set")
+func (mmPrepare *mSqlPreparerMockPrepare) Return(s1 sqlStmt, err error) *SqlPreparerMock {
+	if mmPrepare.mock.funcPrepare != nil {
+		mmPrepare.mock.t.Fatalf("SqlPreparerMock.Prepare mock is already set by Set")
 	}
 
-	if m.defaultExpectation == nil {
-		m.defaultExpectation = &SqlPreparerMockPrepareExpectation{mock: m.mock}
+	if mmPrepare.defaultExpectation == nil {
+		mmPrepare.defaultExpectation = &SqlPreparerMockPrepareExpectation{mock: mmPrepare.mock}
 	}
-	m.defaultExpectation.results = &SqlPreparerMockPrepareResults{s1, err}
-	return m.mock
+	mmPrepare.defaultExpectation.results = &SqlPreparerMockPrepareResults{s1, err}
+	return mmPrepare.mock
 }
 
 //Set uses given function f to mock the sqlPreparer.Prepare method
-func (m *mSqlPreparerMockPrepare) Set(f func(ctx context.Context, query string) (s1 sqlStmt, err error)) *SqlPreparerMock {
-	if m.defaultExpectation != nil {
-		m.mock.t.Fatalf("Default expectation is already set for the sqlPreparer.Prepare method")
+func (mmPrepare *mSqlPreparerMockPrepare) Set(f func(ctx context.Context, query string) (s1 sqlStmt, err error)) *SqlPreparerMock {
+	if mmPrepare.defaultExpectation != nil {
+		mmPrepare.mock.t.Fatalf("Default expectation is already set for the sqlPreparer.Prepare method")
 	}
 
-	if len(m.expectations) > 0 {
-		m.mock.t.Fatalf("Some expectations are already set for the sqlPreparer.Prepare method")
+	if len(mmPrepare.expectations) > 0 {
+		mmPrepare.mock.t.Fatalf("Some expectations are already set for the sqlPreparer.Prepare method")
 	}
 
-	m.mock.funcPrepare = f
-	return m.mock
+	mmPrepare.mock.funcPrepare = f
+	return mmPrepare.mock
 }
 
 // When sets expectation for the sqlPreparer.Prepare which will trigger the result defined by the following
 // Then helper
-func (m *mSqlPreparerMockPrepare) When(ctx context.Context, query string) *SqlPreparerMockPrepareExpectation {
-	if m.mock.funcPrepare != nil {
-		m.mock.t.Fatalf("SqlPreparerMock.Prepare mock is already set by Set")
+func (mmPrepare *mSqlPreparerMockPrepare) When(ctx context.Context, query string) *SqlPreparerMockPrepareExpectation {
+	if mmPrepare.mock.funcPrepare != nil {
+		mmPrepare.mock.t.Fatalf("SqlPreparerMock.Prepare mock is already set by Set")
 	}
 
 	expectation := &SqlPreparerMockPrepareExpectation{
-		mock:   m.mock,
+		mock:   mmPrepare.mock,
 		params: &SqlPreparerMockPrepareParams{ctx, query},
 	}
-	m.expectations = append(m.expectations, expectation)
+	mmPrepare.expectations = append(mmPrepare.expectations, expectation)
 	return expectation
 }
 
@@ -126,46 +144,70 @@ func (e *SqlPreparerMockPrepareExpectation) Then(s1 sqlStmt, err error) *SqlPrep
 }
 
 // Prepare implements sqlPreparer
-func (m *SqlPreparerMock) Prepare(ctx context.Context, query string) (s1 sqlStmt, err error) {
-	mm_atomic.AddUint64(&m.beforePrepareCounter, 1)
-	defer mm_atomic.AddUint64(&m.afterPrepareCounter, 1)
+func (mmPrepare *SqlPreparerMock) Prepare(ctx context.Context, query string) (s1 sqlStmt, err error) {
+	mm_atomic.AddUint64(&mmPrepare.beforePrepareCounter, 1)
+	defer mm_atomic.AddUint64(&mmPrepare.afterPrepareCounter, 1)
 
-	for _, e := range m.PrepareMock.expectations {
-		if minimock.Equal(*e.params, SqlPreparerMockPrepareParams{ctx, query}) {
+	if mmPrepare.inspectFuncPrepare != nil {
+		mmPrepare.inspectFuncPrepare(ctx, query)
+	}
+
+	mm_params := &SqlPreparerMockPrepareParams{ctx, query}
+
+	// Record call args
+	mmPrepare.PrepareMock.mutex.Lock()
+	mmPrepare.PrepareMock.callArgs = append(mmPrepare.PrepareMock.callArgs, mm_params)
+	mmPrepare.PrepareMock.mutex.Unlock()
+
+	for _, e := range mmPrepare.PrepareMock.expectations {
+		if minimock.Equal(e.params, mm_params) {
 			mm_atomic.AddUint64(&e.Counter, 1)
 			return e.results.s1, e.results.err
 		}
 	}
 
-	if m.PrepareMock.defaultExpectation != nil {
-		mm_atomic.AddUint64(&m.PrepareMock.defaultExpectation.Counter, 1)
-		want := m.PrepareMock.defaultExpectation.params
-		got := SqlPreparerMockPrepareParams{ctx, query}
-		if want != nil && !minimock.Equal(*want, got) {
-			m.t.Errorf("SqlPreparerMock.Prepare got unexpected parameters, want: %#v, got: %#v%s\n", *want, got, minimock.Diff(*want, got))
+	if mmPrepare.PrepareMock.defaultExpectation != nil {
+		mm_atomic.AddUint64(&mmPrepare.PrepareMock.defaultExpectation.Counter, 1)
+		mm_want := mmPrepare.PrepareMock.defaultExpectation.params
+		mm_got := SqlPreparerMockPrepareParams{ctx, query}
+		if mm_want != nil && !minimock.Equal(*mm_want, mm_got) {
+			mmPrepare.t.Errorf("SqlPreparerMock.Prepare got unexpected parameters, want: %#v, got: %#v%s\n", *mm_want, mm_got, minimock.Diff(*mm_want, mm_got))
 		}
 
-		results := m.PrepareMock.defaultExpectation.results
-		if results == nil {
-			m.t.Fatal("No results are set for the SqlPreparerMock.Prepare")
+		mm_results := mmPrepare.PrepareMock.defaultExpectation.results
+		if mm_results == nil {
+			mmPrepare.t.Fatal("No results are set for the SqlPreparerMock.Prepare")
 		}
-		return (*results).s1, (*results).err
+		return (*mm_results).s1, (*mm_results).err
 	}
-	if m.funcPrepare != nil {
-		return m.funcPrepare(ctx, query)
+	if mmPrepare.funcPrepare != nil {
+		return mmPrepare.funcPrepare(ctx, query)
 	}
-	m.t.Fatalf("Unexpected call to SqlPreparerMock.Prepare. %v %v", ctx, query)
+	mmPrepare.t.Fatalf("Unexpected call to SqlPreparerMock.Prepare. %v %v", ctx, query)
 	return
 }
 
 // PrepareAfterCounter returns a count of finished SqlPreparerMock.Prepare invocations
-func (m *SqlPreparerMock) PrepareAfterCounter() uint64 {
-	return mm_atomic.LoadUint64(&m.afterPrepareCounter)
+func (mmPrepare *SqlPreparerMock) PrepareAfterCounter() uint64 {
+	return mm_atomic.LoadUint64(&mmPrepare.afterPrepareCounter)
 }
 
 // PrepareBeforeCounter returns a count of SqlPreparerMock.Prepare invocations
-func (m *SqlPreparerMock) PrepareBeforeCounter() uint64 {
-	return mm_atomic.LoadUint64(&m.beforePrepareCounter)
+func (mmPrepare *SqlPreparerMock) PrepareBeforeCounter() uint64 {
+	return mm_atomic.LoadUint64(&mmPrepare.beforePrepareCounter)
+}
+
+// Calls returns a list of arguments used in each call to SqlPreparerMock.Prepare.
+// The list is in the same order as the calls were made (i.e. recent calls have a higher index)
+func (mmPrepare *mSqlPreparerMockPrepare) Calls() []*SqlPreparerMockPrepareParams {
+	mmPrepare.mutex.RLock()
+
+	argCopy := make([]*SqlPreparerMockPrepareParams, len(mmPrepare.callArgs))
+	copy(argCopy, mmPrepare.callArgs)
+
+	mmPrepare.mutex.RUnlock()
+
+	return argCopy
 }
 
 // MinimockPrepareDone returns true if the count of the Prepare invocations corresponds

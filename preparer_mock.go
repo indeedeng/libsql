@@ -4,10 +4,11 @@ package libsql
 
 import (
 	"context"
+	"sync"
 	mm_atomic "sync/atomic"
 	mm_time "time"
 
-	"github.com/gojuno/minimock"
+	"github.com/gojuno/minimock/v3"
 )
 
 // PreparerMock implements Preparer
@@ -15,6 +16,7 @@ type PreparerMock struct {
 	t minimock.Tester
 
 	funcPrepared          func(ctx context.Context, sql string, work func(Statement) error) (err error)
+	inspectFuncPrepared   func(ctx context.Context, sql string, work func(Statement) error)
 	afterPreparedCounter  uint64
 	beforePreparedCounter uint64
 	PreparedMock          mPreparerMockPrepared
@@ -26,7 +28,9 @@ func NewPreparerMock(t minimock.Tester) *PreparerMock {
 	if controller, ok := t.(minimock.MockController); ok {
 		controller.RegisterMocker(m)
 	}
+
 	m.PreparedMock = mPreparerMockPrepared{mock: m}
+	m.PreparedMock.callArgs = []*PreparerMockPreparedParams{}
 
 	return m
 }
@@ -35,6 +39,9 @@ type mPreparerMockPrepared struct {
 	mock               *PreparerMock
 	defaultExpectation *PreparerMockPreparedExpectation
 	expectations       []*PreparerMockPreparedExpectation
+
+	callArgs []*PreparerMockPreparedParams
+	mutex    sync.RWMutex
 }
 
 // PreparerMockPreparedExpectation specifies expectation struct of the Preparer.Prepared
@@ -58,64 +65,75 @@ type PreparerMockPreparedResults struct {
 }
 
 // Expect sets up expected params for Preparer.Prepared
-func (m *mPreparerMockPrepared) Expect(ctx context.Context, sql string, work func(Statement) error) *mPreparerMockPrepared {
-	if m.mock.funcPrepared != nil {
-		m.mock.t.Fatalf("PreparerMock.Prepared mock is already set by Set")
+func (mmPrepared *mPreparerMockPrepared) Expect(ctx context.Context, sql string, work func(Statement) error) *mPreparerMockPrepared {
+	if mmPrepared.mock.funcPrepared != nil {
+		mmPrepared.mock.t.Fatalf("PreparerMock.Prepared mock is already set by Set")
 	}
 
-	if m.defaultExpectation == nil {
-		m.defaultExpectation = &PreparerMockPreparedExpectation{}
+	if mmPrepared.defaultExpectation == nil {
+		mmPrepared.defaultExpectation = &PreparerMockPreparedExpectation{}
 	}
 
-	m.defaultExpectation.params = &PreparerMockPreparedParams{ctx, sql, work}
-	for _, e := range m.expectations {
-		if minimock.Equal(e.params, m.defaultExpectation.params) {
-			m.mock.t.Fatalf("Expectation set by When has same params: %#v", *m.defaultExpectation.params)
+	mmPrepared.defaultExpectation.params = &PreparerMockPreparedParams{ctx, sql, work}
+	for _, e := range mmPrepared.expectations {
+		if minimock.Equal(e.params, mmPrepared.defaultExpectation.params) {
+			mmPrepared.mock.t.Fatalf("Expectation set by When has same params: %#v", *mmPrepared.defaultExpectation.params)
 		}
 	}
 
-	return m
+	return mmPrepared
+}
+
+// Inspect accepts an inspector function that has same arguments as the Preparer.Prepared
+func (mmPrepared *mPreparerMockPrepared) Inspect(f func(ctx context.Context, sql string, work func(Statement) error)) *mPreparerMockPrepared {
+	if mmPrepared.mock.inspectFuncPrepared != nil {
+		mmPrepared.mock.t.Fatalf("Inspect function is already set for PreparerMock.Prepared")
+	}
+
+	mmPrepared.mock.inspectFuncPrepared = f
+
+	return mmPrepared
 }
 
 // Return sets up results that will be returned by Preparer.Prepared
-func (m *mPreparerMockPrepared) Return(err error) *PreparerMock {
-	if m.mock.funcPrepared != nil {
-		m.mock.t.Fatalf("PreparerMock.Prepared mock is already set by Set")
+func (mmPrepared *mPreparerMockPrepared) Return(err error) *PreparerMock {
+	if mmPrepared.mock.funcPrepared != nil {
+		mmPrepared.mock.t.Fatalf("PreparerMock.Prepared mock is already set by Set")
 	}
 
-	if m.defaultExpectation == nil {
-		m.defaultExpectation = &PreparerMockPreparedExpectation{mock: m.mock}
+	if mmPrepared.defaultExpectation == nil {
+		mmPrepared.defaultExpectation = &PreparerMockPreparedExpectation{mock: mmPrepared.mock}
 	}
-	m.defaultExpectation.results = &PreparerMockPreparedResults{err}
-	return m.mock
+	mmPrepared.defaultExpectation.results = &PreparerMockPreparedResults{err}
+	return mmPrepared.mock
 }
 
 //Set uses given function f to mock the Preparer.Prepared method
-func (m *mPreparerMockPrepared) Set(f func(ctx context.Context, sql string, work func(Statement) error) (err error)) *PreparerMock {
-	if m.defaultExpectation != nil {
-		m.mock.t.Fatalf("Default expectation is already set for the Preparer.Prepared method")
+func (mmPrepared *mPreparerMockPrepared) Set(f func(ctx context.Context, sql string, work func(Statement) error) (err error)) *PreparerMock {
+	if mmPrepared.defaultExpectation != nil {
+		mmPrepared.mock.t.Fatalf("Default expectation is already set for the Preparer.Prepared method")
 	}
 
-	if len(m.expectations) > 0 {
-		m.mock.t.Fatalf("Some expectations are already set for the Preparer.Prepared method")
+	if len(mmPrepared.expectations) > 0 {
+		mmPrepared.mock.t.Fatalf("Some expectations are already set for the Preparer.Prepared method")
 	}
 
-	m.mock.funcPrepared = f
-	return m.mock
+	mmPrepared.mock.funcPrepared = f
+	return mmPrepared.mock
 }
 
 // When sets expectation for the Preparer.Prepared which will trigger the result defined by the following
 // Then helper
-func (m *mPreparerMockPrepared) When(ctx context.Context, sql string, work func(Statement) error) *PreparerMockPreparedExpectation {
-	if m.mock.funcPrepared != nil {
-		m.mock.t.Fatalf("PreparerMock.Prepared mock is already set by Set")
+func (mmPrepared *mPreparerMockPrepared) When(ctx context.Context, sql string, work func(Statement) error) *PreparerMockPreparedExpectation {
+	if mmPrepared.mock.funcPrepared != nil {
+		mmPrepared.mock.t.Fatalf("PreparerMock.Prepared mock is already set by Set")
 	}
 
 	expectation := &PreparerMockPreparedExpectation{
-		mock:   m.mock,
+		mock:   mmPrepared.mock,
 		params: &PreparerMockPreparedParams{ctx, sql, work},
 	}
-	m.expectations = append(m.expectations, expectation)
+	mmPrepared.expectations = append(mmPrepared.expectations, expectation)
 	return expectation
 }
 
@@ -126,46 +144,70 @@ func (e *PreparerMockPreparedExpectation) Then(err error) *PreparerMock {
 }
 
 // Prepared implements Preparer
-func (m *PreparerMock) Prepared(ctx context.Context, sql string, work func(Statement) error) (err error) {
-	mm_atomic.AddUint64(&m.beforePreparedCounter, 1)
-	defer mm_atomic.AddUint64(&m.afterPreparedCounter, 1)
+func (mmPrepared *PreparerMock) Prepared(ctx context.Context, sql string, work func(Statement) error) (err error) {
+	mm_atomic.AddUint64(&mmPrepared.beforePreparedCounter, 1)
+	defer mm_atomic.AddUint64(&mmPrepared.afterPreparedCounter, 1)
 
-	for _, e := range m.PreparedMock.expectations {
-		if minimock.Equal(*e.params, PreparerMockPreparedParams{ctx, sql, work}) {
+	if mmPrepared.inspectFuncPrepared != nil {
+		mmPrepared.inspectFuncPrepared(ctx, sql, work)
+	}
+
+	mm_params := &PreparerMockPreparedParams{ctx, sql, work}
+
+	// Record call args
+	mmPrepared.PreparedMock.mutex.Lock()
+	mmPrepared.PreparedMock.callArgs = append(mmPrepared.PreparedMock.callArgs, mm_params)
+	mmPrepared.PreparedMock.mutex.Unlock()
+
+	for _, e := range mmPrepared.PreparedMock.expectations {
+		if minimock.Equal(e.params, mm_params) {
 			mm_atomic.AddUint64(&e.Counter, 1)
 			return e.results.err
 		}
 	}
 
-	if m.PreparedMock.defaultExpectation != nil {
-		mm_atomic.AddUint64(&m.PreparedMock.defaultExpectation.Counter, 1)
-		want := m.PreparedMock.defaultExpectation.params
-		got := PreparerMockPreparedParams{ctx, sql, work}
-		if want != nil && !minimock.Equal(*want, got) {
-			m.t.Errorf("PreparerMock.Prepared got unexpected parameters, want: %#v, got: %#v%s\n", *want, got, minimock.Diff(*want, got))
+	if mmPrepared.PreparedMock.defaultExpectation != nil {
+		mm_atomic.AddUint64(&mmPrepared.PreparedMock.defaultExpectation.Counter, 1)
+		mm_want := mmPrepared.PreparedMock.defaultExpectation.params
+		mm_got := PreparerMockPreparedParams{ctx, sql, work}
+		if mm_want != nil && !minimock.Equal(*mm_want, mm_got) {
+			mmPrepared.t.Errorf("PreparerMock.Prepared got unexpected parameters, want: %#v, got: %#v%s\n", *mm_want, mm_got, minimock.Diff(*mm_want, mm_got))
 		}
 
-		results := m.PreparedMock.defaultExpectation.results
-		if results == nil {
-			m.t.Fatal("No results are set for the PreparerMock.Prepared")
+		mm_results := mmPrepared.PreparedMock.defaultExpectation.results
+		if mm_results == nil {
+			mmPrepared.t.Fatal("No results are set for the PreparerMock.Prepared")
 		}
-		return (*results).err
+		return (*mm_results).err
 	}
-	if m.funcPrepared != nil {
-		return m.funcPrepared(ctx, sql, work)
+	if mmPrepared.funcPrepared != nil {
+		return mmPrepared.funcPrepared(ctx, sql, work)
 	}
-	m.t.Fatalf("Unexpected call to PreparerMock.Prepared. %v %v %v", ctx, sql, work)
+	mmPrepared.t.Fatalf("Unexpected call to PreparerMock.Prepared. %v %v %v", ctx, sql, work)
 	return
 }
 
 // PreparedAfterCounter returns a count of finished PreparerMock.Prepared invocations
-func (m *PreparerMock) PreparedAfterCounter() uint64 {
-	return mm_atomic.LoadUint64(&m.afterPreparedCounter)
+func (mmPrepared *PreparerMock) PreparedAfterCounter() uint64 {
+	return mm_atomic.LoadUint64(&mmPrepared.afterPreparedCounter)
 }
 
 // PreparedBeforeCounter returns a count of PreparerMock.Prepared invocations
-func (m *PreparerMock) PreparedBeforeCounter() uint64 {
-	return mm_atomic.LoadUint64(&m.beforePreparedCounter)
+func (mmPrepared *PreparerMock) PreparedBeforeCounter() uint64 {
+	return mm_atomic.LoadUint64(&mmPrepared.beforePreparedCounter)
+}
+
+// Calls returns a list of arguments used in each call to PreparerMock.Prepared.
+// The list is in the same order as the calls were made (i.e. recent calls have a higher index)
+func (mmPrepared *mPreparerMockPrepared) Calls() []*PreparerMockPreparedParams {
+	mmPrepared.mutex.RLock()
+
+	argCopy := make([]*PreparerMockPreparedParams, len(mmPrepared.callArgs))
+	copy(argCopy, mmPrepared.callArgs)
+
+	mmPrepared.mutex.RUnlock()
+
+	return argCopy
 }
 
 // MinimockPreparedDone returns true if the count of the Prepared invocations corresponds

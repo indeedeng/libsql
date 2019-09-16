@@ -5,10 +5,11 @@ package libsql
 import (
 	"context"
 	"database/sql"
+	"sync"
 	mm_atomic "sync/atomic"
 	mm_time "time"
 
-	"github.com/gojuno/minimock"
+	"github.com/gojuno/minimock/v3"
 )
 
 // QueryerMock implements Queryer
@@ -16,26 +17,31 @@ type QueryerMock struct {
 	t minimock.Tester
 
 	funcScan          func(ctx context.Context, scanner RowScanner, sql string, args ...interface{}) (err error)
+	inspectFuncScan   func(ctx context.Context, scanner RowScanner, sql string, args ...interface{})
 	afterScanCounter  uint64
 	beforeScanCounter uint64
 	ScanMock          mQueryerMockScan
 
 	funcScanOne          func(ctx context.Context, scanner RowScanner, sql string, args ...interface{}) (err error)
+	inspectFuncScanOne   func(ctx context.Context, scanner RowScanner, sql string, args ...interface{})
 	afterScanOneCounter  uint64
 	beforeScanOneCounter uint64
 	ScanOneMock          mQueryerMockScanOne
 
 	funcUpdate          func(ctx context.Context, sql string, args ...interface{}) (r1 sql.Result, err error)
+	inspectFuncUpdate   func(ctx context.Context, sql string, args ...interface{})
 	afterUpdateCounter  uint64
 	beforeUpdateCounter uint64
 	UpdateMock          mQueryerMockUpdate
 
 	funcUpdateAndGetLastInsertID          func(ctx context.Context, sql string, args ...interface{}) (i1 int64, err error)
+	inspectFuncUpdateAndGetLastInsertID   func(ctx context.Context, sql string, args ...interface{})
 	afterUpdateAndGetLastInsertIDCounter  uint64
 	beforeUpdateAndGetLastInsertIDCounter uint64
 	UpdateAndGetLastInsertIDMock          mQueryerMockUpdateAndGetLastInsertID
 
 	funcUpdateAndGetRowsAffected          func(ctx context.Context, sql string, args ...interface{}) (i1 int64, err error)
+	inspectFuncUpdateAndGetRowsAffected   func(ctx context.Context, sql string, args ...interface{})
 	afterUpdateAndGetRowsAffectedCounter  uint64
 	beforeUpdateAndGetRowsAffectedCounter uint64
 	UpdateAndGetRowsAffectedMock          mQueryerMockUpdateAndGetRowsAffected
@@ -47,11 +53,21 @@ func NewQueryerMock(t minimock.Tester) *QueryerMock {
 	if controller, ok := t.(minimock.MockController); ok {
 		controller.RegisterMocker(m)
 	}
+
 	m.ScanMock = mQueryerMockScan{mock: m}
+	m.ScanMock.callArgs = []*QueryerMockScanParams{}
+
 	m.ScanOneMock = mQueryerMockScanOne{mock: m}
+	m.ScanOneMock.callArgs = []*QueryerMockScanOneParams{}
+
 	m.UpdateMock = mQueryerMockUpdate{mock: m}
+	m.UpdateMock.callArgs = []*QueryerMockUpdateParams{}
+
 	m.UpdateAndGetLastInsertIDMock = mQueryerMockUpdateAndGetLastInsertID{mock: m}
+	m.UpdateAndGetLastInsertIDMock.callArgs = []*QueryerMockUpdateAndGetLastInsertIDParams{}
+
 	m.UpdateAndGetRowsAffectedMock = mQueryerMockUpdateAndGetRowsAffected{mock: m}
+	m.UpdateAndGetRowsAffectedMock.callArgs = []*QueryerMockUpdateAndGetRowsAffectedParams{}
 
 	return m
 }
@@ -60,6 +76,9 @@ type mQueryerMockScan struct {
 	mock               *QueryerMock
 	defaultExpectation *QueryerMockScanExpectation
 	expectations       []*QueryerMockScanExpectation
+
+	callArgs []*QueryerMockScanParams
+	mutex    sync.RWMutex
 }
 
 // QueryerMockScanExpectation specifies expectation struct of the Queryer.Scan
@@ -84,64 +103,75 @@ type QueryerMockScanResults struct {
 }
 
 // Expect sets up expected params for Queryer.Scan
-func (m *mQueryerMockScan) Expect(ctx context.Context, scanner RowScanner, sql string, args ...interface{}) *mQueryerMockScan {
-	if m.mock.funcScan != nil {
-		m.mock.t.Fatalf("QueryerMock.Scan mock is already set by Set")
+func (mmScan *mQueryerMockScan) Expect(ctx context.Context, scanner RowScanner, sql string, args ...interface{}) *mQueryerMockScan {
+	if mmScan.mock.funcScan != nil {
+		mmScan.mock.t.Fatalf("QueryerMock.Scan mock is already set by Set")
 	}
 
-	if m.defaultExpectation == nil {
-		m.defaultExpectation = &QueryerMockScanExpectation{}
+	if mmScan.defaultExpectation == nil {
+		mmScan.defaultExpectation = &QueryerMockScanExpectation{}
 	}
 
-	m.defaultExpectation.params = &QueryerMockScanParams{ctx, scanner, sql, args}
-	for _, e := range m.expectations {
-		if minimock.Equal(e.params, m.defaultExpectation.params) {
-			m.mock.t.Fatalf("Expectation set by When has same params: %#v", *m.defaultExpectation.params)
+	mmScan.defaultExpectation.params = &QueryerMockScanParams{ctx, scanner, sql, args}
+	for _, e := range mmScan.expectations {
+		if minimock.Equal(e.params, mmScan.defaultExpectation.params) {
+			mmScan.mock.t.Fatalf("Expectation set by When has same params: %#v", *mmScan.defaultExpectation.params)
 		}
 	}
 
-	return m
+	return mmScan
+}
+
+// Inspect accepts an inspector function that has same arguments as the Queryer.Scan
+func (mmScan *mQueryerMockScan) Inspect(f func(ctx context.Context, scanner RowScanner, sql string, args ...interface{})) *mQueryerMockScan {
+	if mmScan.mock.inspectFuncScan != nil {
+		mmScan.mock.t.Fatalf("Inspect function is already set for QueryerMock.Scan")
+	}
+
+	mmScan.mock.inspectFuncScan = f
+
+	return mmScan
 }
 
 // Return sets up results that will be returned by Queryer.Scan
-func (m *mQueryerMockScan) Return(err error) *QueryerMock {
-	if m.mock.funcScan != nil {
-		m.mock.t.Fatalf("QueryerMock.Scan mock is already set by Set")
+func (mmScan *mQueryerMockScan) Return(err error) *QueryerMock {
+	if mmScan.mock.funcScan != nil {
+		mmScan.mock.t.Fatalf("QueryerMock.Scan mock is already set by Set")
 	}
 
-	if m.defaultExpectation == nil {
-		m.defaultExpectation = &QueryerMockScanExpectation{mock: m.mock}
+	if mmScan.defaultExpectation == nil {
+		mmScan.defaultExpectation = &QueryerMockScanExpectation{mock: mmScan.mock}
 	}
-	m.defaultExpectation.results = &QueryerMockScanResults{err}
-	return m.mock
+	mmScan.defaultExpectation.results = &QueryerMockScanResults{err}
+	return mmScan.mock
 }
 
 //Set uses given function f to mock the Queryer.Scan method
-func (m *mQueryerMockScan) Set(f func(ctx context.Context, scanner RowScanner, sql string, args ...interface{}) (err error)) *QueryerMock {
-	if m.defaultExpectation != nil {
-		m.mock.t.Fatalf("Default expectation is already set for the Queryer.Scan method")
+func (mmScan *mQueryerMockScan) Set(f func(ctx context.Context, scanner RowScanner, sql string, args ...interface{}) (err error)) *QueryerMock {
+	if mmScan.defaultExpectation != nil {
+		mmScan.mock.t.Fatalf("Default expectation is already set for the Queryer.Scan method")
 	}
 
-	if len(m.expectations) > 0 {
-		m.mock.t.Fatalf("Some expectations are already set for the Queryer.Scan method")
+	if len(mmScan.expectations) > 0 {
+		mmScan.mock.t.Fatalf("Some expectations are already set for the Queryer.Scan method")
 	}
 
-	m.mock.funcScan = f
-	return m.mock
+	mmScan.mock.funcScan = f
+	return mmScan.mock
 }
 
 // When sets expectation for the Queryer.Scan which will trigger the result defined by the following
 // Then helper
-func (m *mQueryerMockScan) When(ctx context.Context, scanner RowScanner, sql string, args ...interface{}) *QueryerMockScanExpectation {
-	if m.mock.funcScan != nil {
-		m.mock.t.Fatalf("QueryerMock.Scan mock is already set by Set")
+func (mmScan *mQueryerMockScan) When(ctx context.Context, scanner RowScanner, sql string, args ...interface{}) *QueryerMockScanExpectation {
+	if mmScan.mock.funcScan != nil {
+		mmScan.mock.t.Fatalf("QueryerMock.Scan mock is already set by Set")
 	}
 
 	expectation := &QueryerMockScanExpectation{
-		mock:   m.mock,
+		mock:   mmScan.mock,
 		params: &QueryerMockScanParams{ctx, scanner, sql, args},
 	}
-	m.expectations = append(m.expectations, expectation)
+	mmScan.expectations = append(mmScan.expectations, expectation)
 	return expectation
 }
 
@@ -152,46 +182,70 @@ func (e *QueryerMockScanExpectation) Then(err error) *QueryerMock {
 }
 
 // Scan implements Queryer
-func (m *QueryerMock) Scan(ctx context.Context, scanner RowScanner, sql string, args ...interface{}) (err error) {
-	mm_atomic.AddUint64(&m.beforeScanCounter, 1)
-	defer mm_atomic.AddUint64(&m.afterScanCounter, 1)
+func (mmScan *QueryerMock) Scan(ctx context.Context, scanner RowScanner, sql string, args ...interface{}) (err error) {
+	mm_atomic.AddUint64(&mmScan.beforeScanCounter, 1)
+	defer mm_atomic.AddUint64(&mmScan.afterScanCounter, 1)
 
-	for _, e := range m.ScanMock.expectations {
-		if minimock.Equal(*e.params, QueryerMockScanParams{ctx, scanner, sql, args}) {
+	if mmScan.inspectFuncScan != nil {
+		mmScan.inspectFuncScan(ctx, scanner, sql, args...)
+	}
+
+	mm_params := &QueryerMockScanParams{ctx, scanner, sql, args}
+
+	// Record call args
+	mmScan.ScanMock.mutex.Lock()
+	mmScan.ScanMock.callArgs = append(mmScan.ScanMock.callArgs, mm_params)
+	mmScan.ScanMock.mutex.Unlock()
+
+	for _, e := range mmScan.ScanMock.expectations {
+		if minimock.Equal(e.params, mm_params) {
 			mm_atomic.AddUint64(&e.Counter, 1)
 			return e.results.err
 		}
 	}
 
-	if m.ScanMock.defaultExpectation != nil {
-		mm_atomic.AddUint64(&m.ScanMock.defaultExpectation.Counter, 1)
-		want := m.ScanMock.defaultExpectation.params
-		got := QueryerMockScanParams{ctx, scanner, sql, args}
-		if want != nil && !minimock.Equal(*want, got) {
-			m.t.Errorf("QueryerMock.Scan got unexpected parameters, want: %#v, got: %#v%s\n", *want, got, minimock.Diff(*want, got))
+	if mmScan.ScanMock.defaultExpectation != nil {
+		mm_atomic.AddUint64(&mmScan.ScanMock.defaultExpectation.Counter, 1)
+		mm_want := mmScan.ScanMock.defaultExpectation.params
+		mm_got := QueryerMockScanParams{ctx, scanner, sql, args}
+		if mm_want != nil && !minimock.Equal(*mm_want, mm_got) {
+			mmScan.t.Errorf("QueryerMock.Scan got unexpected parameters, want: %#v, got: %#v%s\n", *mm_want, mm_got, minimock.Diff(*mm_want, mm_got))
 		}
 
-		results := m.ScanMock.defaultExpectation.results
-		if results == nil {
-			m.t.Fatal("No results are set for the QueryerMock.Scan")
+		mm_results := mmScan.ScanMock.defaultExpectation.results
+		if mm_results == nil {
+			mmScan.t.Fatal("No results are set for the QueryerMock.Scan")
 		}
-		return (*results).err
+		return (*mm_results).err
 	}
-	if m.funcScan != nil {
-		return m.funcScan(ctx, scanner, sql, args...)
+	if mmScan.funcScan != nil {
+		return mmScan.funcScan(ctx, scanner, sql, args...)
 	}
-	m.t.Fatalf("Unexpected call to QueryerMock.Scan. %v %v %v %v", ctx, scanner, sql, args)
+	mmScan.t.Fatalf("Unexpected call to QueryerMock.Scan. %v %v %v %v", ctx, scanner, sql, args)
 	return
 }
 
 // ScanAfterCounter returns a count of finished QueryerMock.Scan invocations
-func (m *QueryerMock) ScanAfterCounter() uint64 {
-	return mm_atomic.LoadUint64(&m.afterScanCounter)
+func (mmScan *QueryerMock) ScanAfterCounter() uint64 {
+	return mm_atomic.LoadUint64(&mmScan.afterScanCounter)
 }
 
 // ScanBeforeCounter returns a count of QueryerMock.Scan invocations
-func (m *QueryerMock) ScanBeforeCounter() uint64 {
-	return mm_atomic.LoadUint64(&m.beforeScanCounter)
+func (mmScan *QueryerMock) ScanBeforeCounter() uint64 {
+	return mm_atomic.LoadUint64(&mmScan.beforeScanCounter)
+}
+
+// Calls returns a list of arguments used in each call to QueryerMock.Scan.
+// The list is in the same order as the calls were made (i.e. recent calls have a higher index)
+func (mmScan *mQueryerMockScan) Calls() []*QueryerMockScanParams {
+	mmScan.mutex.RLock()
+
+	argCopy := make([]*QueryerMockScanParams, len(mmScan.callArgs))
+	copy(argCopy, mmScan.callArgs)
+
+	mmScan.mutex.RUnlock()
+
+	return argCopy
 }
 
 // MinimockScanDone returns true if the count of the Scan invocations corresponds
@@ -240,6 +294,9 @@ type mQueryerMockScanOne struct {
 	mock               *QueryerMock
 	defaultExpectation *QueryerMockScanOneExpectation
 	expectations       []*QueryerMockScanOneExpectation
+
+	callArgs []*QueryerMockScanOneParams
+	mutex    sync.RWMutex
 }
 
 // QueryerMockScanOneExpectation specifies expectation struct of the Queryer.ScanOne
@@ -264,64 +321,75 @@ type QueryerMockScanOneResults struct {
 }
 
 // Expect sets up expected params for Queryer.ScanOne
-func (m *mQueryerMockScanOne) Expect(ctx context.Context, scanner RowScanner, sql string, args ...interface{}) *mQueryerMockScanOne {
-	if m.mock.funcScanOne != nil {
-		m.mock.t.Fatalf("QueryerMock.ScanOne mock is already set by Set")
+func (mmScanOne *mQueryerMockScanOne) Expect(ctx context.Context, scanner RowScanner, sql string, args ...interface{}) *mQueryerMockScanOne {
+	if mmScanOne.mock.funcScanOne != nil {
+		mmScanOne.mock.t.Fatalf("QueryerMock.ScanOne mock is already set by Set")
 	}
 
-	if m.defaultExpectation == nil {
-		m.defaultExpectation = &QueryerMockScanOneExpectation{}
+	if mmScanOne.defaultExpectation == nil {
+		mmScanOne.defaultExpectation = &QueryerMockScanOneExpectation{}
 	}
 
-	m.defaultExpectation.params = &QueryerMockScanOneParams{ctx, scanner, sql, args}
-	for _, e := range m.expectations {
-		if minimock.Equal(e.params, m.defaultExpectation.params) {
-			m.mock.t.Fatalf("Expectation set by When has same params: %#v", *m.defaultExpectation.params)
+	mmScanOne.defaultExpectation.params = &QueryerMockScanOneParams{ctx, scanner, sql, args}
+	for _, e := range mmScanOne.expectations {
+		if minimock.Equal(e.params, mmScanOne.defaultExpectation.params) {
+			mmScanOne.mock.t.Fatalf("Expectation set by When has same params: %#v", *mmScanOne.defaultExpectation.params)
 		}
 	}
 
-	return m
+	return mmScanOne
+}
+
+// Inspect accepts an inspector function that has same arguments as the Queryer.ScanOne
+func (mmScanOne *mQueryerMockScanOne) Inspect(f func(ctx context.Context, scanner RowScanner, sql string, args ...interface{})) *mQueryerMockScanOne {
+	if mmScanOne.mock.inspectFuncScanOne != nil {
+		mmScanOne.mock.t.Fatalf("Inspect function is already set for QueryerMock.ScanOne")
+	}
+
+	mmScanOne.mock.inspectFuncScanOne = f
+
+	return mmScanOne
 }
 
 // Return sets up results that will be returned by Queryer.ScanOne
-func (m *mQueryerMockScanOne) Return(err error) *QueryerMock {
-	if m.mock.funcScanOne != nil {
-		m.mock.t.Fatalf("QueryerMock.ScanOne mock is already set by Set")
+func (mmScanOne *mQueryerMockScanOne) Return(err error) *QueryerMock {
+	if mmScanOne.mock.funcScanOne != nil {
+		mmScanOne.mock.t.Fatalf("QueryerMock.ScanOne mock is already set by Set")
 	}
 
-	if m.defaultExpectation == nil {
-		m.defaultExpectation = &QueryerMockScanOneExpectation{mock: m.mock}
+	if mmScanOne.defaultExpectation == nil {
+		mmScanOne.defaultExpectation = &QueryerMockScanOneExpectation{mock: mmScanOne.mock}
 	}
-	m.defaultExpectation.results = &QueryerMockScanOneResults{err}
-	return m.mock
+	mmScanOne.defaultExpectation.results = &QueryerMockScanOneResults{err}
+	return mmScanOne.mock
 }
 
 //Set uses given function f to mock the Queryer.ScanOne method
-func (m *mQueryerMockScanOne) Set(f func(ctx context.Context, scanner RowScanner, sql string, args ...interface{}) (err error)) *QueryerMock {
-	if m.defaultExpectation != nil {
-		m.mock.t.Fatalf("Default expectation is already set for the Queryer.ScanOne method")
+func (mmScanOne *mQueryerMockScanOne) Set(f func(ctx context.Context, scanner RowScanner, sql string, args ...interface{}) (err error)) *QueryerMock {
+	if mmScanOne.defaultExpectation != nil {
+		mmScanOne.mock.t.Fatalf("Default expectation is already set for the Queryer.ScanOne method")
 	}
 
-	if len(m.expectations) > 0 {
-		m.mock.t.Fatalf("Some expectations are already set for the Queryer.ScanOne method")
+	if len(mmScanOne.expectations) > 0 {
+		mmScanOne.mock.t.Fatalf("Some expectations are already set for the Queryer.ScanOne method")
 	}
 
-	m.mock.funcScanOne = f
-	return m.mock
+	mmScanOne.mock.funcScanOne = f
+	return mmScanOne.mock
 }
 
 // When sets expectation for the Queryer.ScanOne which will trigger the result defined by the following
 // Then helper
-func (m *mQueryerMockScanOne) When(ctx context.Context, scanner RowScanner, sql string, args ...interface{}) *QueryerMockScanOneExpectation {
-	if m.mock.funcScanOne != nil {
-		m.mock.t.Fatalf("QueryerMock.ScanOne mock is already set by Set")
+func (mmScanOne *mQueryerMockScanOne) When(ctx context.Context, scanner RowScanner, sql string, args ...interface{}) *QueryerMockScanOneExpectation {
+	if mmScanOne.mock.funcScanOne != nil {
+		mmScanOne.mock.t.Fatalf("QueryerMock.ScanOne mock is already set by Set")
 	}
 
 	expectation := &QueryerMockScanOneExpectation{
-		mock:   m.mock,
+		mock:   mmScanOne.mock,
 		params: &QueryerMockScanOneParams{ctx, scanner, sql, args},
 	}
-	m.expectations = append(m.expectations, expectation)
+	mmScanOne.expectations = append(mmScanOne.expectations, expectation)
 	return expectation
 }
 
@@ -332,46 +400,70 @@ func (e *QueryerMockScanOneExpectation) Then(err error) *QueryerMock {
 }
 
 // ScanOne implements Queryer
-func (m *QueryerMock) ScanOne(ctx context.Context, scanner RowScanner, sql string, args ...interface{}) (err error) {
-	mm_atomic.AddUint64(&m.beforeScanOneCounter, 1)
-	defer mm_atomic.AddUint64(&m.afterScanOneCounter, 1)
+func (mmScanOne *QueryerMock) ScanOne(ctx context.Context, scanner RowScanner, sql string, args ...interface{}) (err error) {
+	mm_atomic.AddUint64(&mmScanOne.beforeScanOneCounter, 1)
+	defer mm_atomic.AddUint64(&mmScanOne.afterScanOneCounter, 1)
 
-	for _, e := range m.ScanOneMock.expectations {
-		if minimock.Equal(*e.params, QueryerMockScanOneParams{ctx, scanner, sql, args}) {
+	if mmScanOne.inspectFuncScanOne != nil {
+		mmScanOne.inspectFuncScanOne(ctx, scanner, sql, args...)
+	}
+
+	mm_params := &QueryerMockScanOneParams{ctx, scanner, sql, args}
+
+	// Record call args
+	mmScanOne.ScanOneMock.mutex.Lock()
+	mmScanOne.ScanOneMock.callArgs = append(mmScanOne.ScanOneMock.callArgs, mm_params)
+	mmScanOne.ScanOneMock.mutex.Unlock()
+
+	for _, e := range mmScanOne.ScanOneMock.expectations {
+		if minimock.Equal(e.params, mm_params) {
 			mm_atomic.AddUint64(&e.Counter, 1)
 			return e.results.err
 		}
 	}
 
-	if m.ScanOneMock.defaultExpectation != nil {
-		mm_atomic.AddUint64(&m.ScanOneMock.defaultExpectation.Counter, 1)
-		want := m.ScanOneMock.defaultExpectation.params
-		got := QueryerMockScanOneParams{ctx, scanner, sql, args}
-		if want != nil && !minimock.Equal(*want, got) {
-			m.t.Errorf("QueryerMock.ScanOne got unexpected parameters, want: %#v, got: %#v%s\n", *want, got, minimock.Diff(*want, got))
+	if mmScanOne.ScanOneMock.defaultExpectation != nil {
+		mm_atomic.AddUint64(&mmScanOne.ScanOneMock.defaultExpectation.Counter, 1)
+		mm_want := mmScanOne.ScanOneMock.defaultExpectation.params
+		mm_got := QueryerMockScanOneParams{ctx, scanner, sql, args}
+		if mm_want != nil && !minimock.Equal(*mm_want, mm_got) {
+			mmScanOne.t.Errorf("QueryerMock.ScanOne got unexpected parameters, want: %#v, got: %#v%s\n", *mm_want, mm_got, minimock.Diff(*mm_want, mm_got))
 		}
 
-		results := m.ScanOneMock.defaultExpectation.results
-		if results == nil {
-			m.t.Fatal("No results are set for the QueryerMock.ScanOne")
+		mm_results := mmScanOne.ScanOneMock.defaultExpectation.results
+		if mm_results == nil {
+			mmScanOne.t.Fatal("No results are set for the QueryerMock.ScanOne")
 		}
-		return (*results).err
+		return (*mm_results).err
 	}
-	if m.funcScanOne != nil {
-		return m.funcScanOne(ctx, scanner, sql, args...)
+	if mmScanOne.funcScanOne != nil {
+		return mmScanOne.funcScanOne(ctx, scanner, sql, args...)
 	}
-	m.t.Fatalf("Unexpected call to QueryerMock.ScanOne. %v %v %v %v", ctx, scanner, sql, args)
+	mmScanOne.t.Fatalf("Unexpected call to QueryerMock.ScanOne. %v %v %v %v", ctx, scanner, sql, args)
 	return
 }
 
 // ScanOneAfterCounter returns a count of finished QueryerMock.ScanOne invocations
-func (m *QueryerMock) ScanOneAfterCounter() uint64 {
-	return mm_atomic.LoadUint64(&m.afterScanOneCounter)
+func (mmScanOne *QueryerMock) ScanOneAfterCounter() uint64 {
+	return mm_atomic.LoadUint64(&mmScanOne.afterScanOneCounter)
 }
 
 // ScanOneBeforeCounter returns a count of QueryerMock.ScanOne invocations
-func (m *QueryerMock) ScanOneBeforeCounter() uint64 {
-	return mm_atomic.LoadUint64(&m.beforeScanOneCounter)
+func (mmScanOne *QueryerMock) ScanOneBeforeCounter() uint64 {
+	return mm_atomic.LoadUint64(&mmScanOne.beforeScanOneCounter)
+}
+
+// Calls returns a list of arguments used in each call to QueryerMock.ScanOne.
+// The list is in the same order as the calls were made (i.e. recent calls have a higher index)
+func (mmScanOne *mQueryerMockScanOne) Calls() []*QueryerMockScanOneParams {
+	mmScanOne.mutex.RLock()
+
+	argCopy := make([]*QueryerMockScanOneParams, len(mmScanOne.callArgs))
+	copy(argCopy, mmScanOne.callArgs)
+
+	mmScanOne.mutex.RUnlock()
+
+	return argCopy
 }
 
 // MinimockScanOneDone returns true if the count of the ScanOne invocations corresponds
@@ -420,6 +512,9 @@ type mQueryerMockUpdate struct {
 	mock               *QueryerMock
 	defaultExpectation *QueryerMockUpdateExpectation
 	expectations       []*QueryerMockUpdateExpectation
+
+	callArgs []*QueryerMockUpdateParams
+	mutex    sync.RWMutex
 }
 
 // QueryerMockUpdateExpectation specifies expectation struct of the Queryer.Update
@@ -444,64 +539,75 @@ type QueryerMockUpdateResults struct {
 }
 
 // Expect sets up expected params for Queryer.Update
-func (m *mQueryerMockUpdate) Expect(ctx context.Context, sql string, args ...interface{}) *mQueryerMockUpdate {
-	if m.mock.funcUpdate != nil {
-		m.mock.t.Fatalf("QueryerMock.Update mock is already set by Set")
+func (mmUpdate *mQueryerMockUpdate) Expect(ctx context.Context, sql string, args ...interface{}) *mQueryerMockUpdate {
+	if mmUpdate.mock.funcUpdate != nil {
+		mmUpdate.mock.t.Fatalf("QueryerMock.Update mock is already set by Set")
 	}
 
-	if m.defaultExpectation == nil {
-		m.defaultExpectation = &QueryerMockUpdateExpectation{}
+	if mmUpdate.defaultExpectation == nil {
+		mmUpdate.defaultExpectation = &QueryerMockUpdateExpectation{}
 	}
 
-	m.defaultExpectation.params = &QueryerMockUpdateParams{ctx, sql, args}
-	for _, e := range m.expectations {
-		if minimock.Equal(e.params, m.defaultExpectation.params) {
-			m.mock.t.Fatalf("Expectation set by When has same params: %#v", *m.defaultExpectation.params)
+	mmUpdate.defaultExpectation.params = &QueryerMockUpdateParams{ctx, sql, args}
+	for _, e := range mmUpdate.expectations {
+		if minimock.Equal(e.params, mmUpdate.defaultExpectation.params) {
+			mmUpdate.mock.t.Fatalf("Expectation set by When has same params: %#v", *mmUpdate.defaultExpectation.params)
 		}
 	}
 
-	return m
+	return mmUpdate
+}
+
+// Inspect accepts an inspector function that has same arguments as the Queryer.Update
+func (mmUpdate *mQueryerMockUpdate) Inspect(f func(ctx context.Context, sql string, args ...interface{})) *mQueryerMockUpdate {
+	if mmUpdate.mock.inspectFuncUpdate != nil {
+		mmUpdate.mock.t.Fatalf("Inspect function is already set for QueryerMock.Update")
+	}
+
+	mmUpdate.mock.inspectFuncUpdate = f
+
+	return mmUpdate
 }
 
 // Return sets up results that will be returned by Queryer.Update
-func (m *mQueryerMockUpdate) Return(r1 sql.Result, err error) *QueryerMock {
-	if m.mock.funcUpdate != nil {
-		m.mock.t.Fatalf("QueryerMock.Update mock is already set by Set")
+func (mmUpdate *mQueryerMockUpdate) Return(r1 sql.Result, err error) *QueryerMock {
+	if mmUpdate.mock.funcUpdate != nil {
+		mmUpdate.mock.t.Fatalf("QueryerMock.Update mock is already set by Set")
 	}
 
-	if m.defaultExpectation == nil {
-		m.defaultExpectation = &QueryerMockUpdateExpectation{mock: m.mock}
+	if mmUpdate.defaultExpectation == nil {
+		mmUpdate.defaultExpectation = &QueryerMockUpdateExpectation{mock: mmUpdate.mock}
 	}
-	m.defaultExpectation.results = &QueryerMockUpdateResults{r1, err}
-	return m.mock
+	mmUpdate.defaultExpectation.results = &QueryerMockUpdateResults{r1, err}
+	return mmUpdate.mock
 }
 
 //Set uses given function f to mock the Queryer.Update method
-func (m *mQueryerMockUpdate) Set(f func(ctx context.Context, sql string, args ...interface{}) (r1 sql.Result, err error)) *QueryerMock {
-	if m.defaultExpectation != nil {
-		m.mock.t.Fatalf("Default expectation is already set for the Queryer.Update method")
+func (mmUpdate *mQueryerMockUpdate) Set(f func(ctx context.Context, sql string, args ...interface{}) (r1 sql.Result, err error)) *QueryerMock {
+	if mmUpdate.defaultExpectation != nil {
+		mmUpdate.mock.t.Fatalf("Default expectation is already set for the Queryer.Update method")
 	}
 
-	if len(m.expectations) > 0 {
-		m.mock.t.Fatalf("Some expectations are already set for the Queryer.Update method")
+	if len(mmUpdate.expectations) > 0 {
+		mmUpdate.mock.t.Fatalf("Some expectations are already set for the Queryer.Update method")
 	}
 
-	m.mock.funcUpdate = f
-	return m.mock
+	mmUpdate.mock.funcUpdate = f
+	return mmUpdate.mock
 }
 
 // When sets expectation for the Queryer.Update which will trigger the result defined by the following
 // Then helper
-func (m *mQueryerMockUpdate) When(ctx context.Context, sql string, args ...interface{}) *QueryerMockUpdateExpectation {
-	if m.mock.funcUpdate != nil {
-		m.mock.t.Fatalf("QueryerMock.Update mock is already set by Set")
+func (mmUpdate *mQueryerMockUpdate) When(ctx context.Context, sql string, args ...interface{}) *QueryerMockUpdateExpectation {
+	if mmUpdate.mock.funcUpdate != nil {
+		mmUpdate.mock.t.Fatalf("QueryerMock.Update mock is already set by Set")
 	}
 
 	expectation := &QueryerMockUpdateExpectation{
-		mock:   m.mock,
+		mock:   mmUpdate.mock,
 		params: &QueryerMockUpdateParams{ctx, sql, args},
 	}
-	m.expectations = append(m.expectations, expectation)
+	mmUpdate.expectations = append(mmUpdate.expectations, expectation)
 	return expectation
 }
 
@@ -512,46 +618,70 @@ func (e *QueryerMockUpdateExpectation) Then(r1 sql.Result, err error) *QueryerMo
 }
 
 // Update implements Queryer
-func (m *QueryerMock) Update(ctx context.Context, sql string, args ...interface{}) (r1 sql.Result, err error) {
-	mm_atomic.AddUint64(&m.beforeUpdateCounter, 1)
-	defer mm_atomic.AddUint64(&m.afterUpdateCounter, 1)
+func (mmUpdate *QueryerMock) Update(ctx context.Context, sql string, args ...interface{}) (r1 sql.Result, err error) {
+	mm_atomic.AddUint64(&mmUpdate.beforeUpdateCounter, 1)
+	defer mm_atomic.AddUint64(&mmUpdate.afterUpdateCounter, 1)
 
-	for _, e := range m.UpdateMock.expectations {
-		if minimock.Equal(*e.params, QueryerMockUpdateParams{ctx, sql, args}) {
+	if mmUpdate.inspectFuncUpdate != nil {
+		mmUpdate.inspectFuncUpdate(ctx, sql, args...)
+	}
+
+	mm_params := &QueryerMockUpdateParams{ctx, sql, args}
+
+	// Record call args
+	mmUpdate.UpdateMock.mutex.Lock()
+	mmUpdate.UpdateMock.callArgs = append(mmUpdate.UpdateMock.callArgs, mm_params)
+	mmUpdate.UpdateMock.mutex.Unlock()
+
+	for _, e := range mmUpdate.UpdateMock.expectations {
+		if minimock.Equal(e.params, mm_params) {
 			mm_atomic.AddUint64(&e.Counter, 1)
 			return e.results.r1, e.results.err
 		}
 	}
 
-	if m.UpdateMock.defaultExpectation != nil {
-		mm_atomic.AddUint64(&m.UpdateMock.defaultExpectation.Counter, 1)
-		want := m.UpdateMock.defaultExpectation.params
-		got := QueryerMockUpdateParams{ctx, sql, args}
-		if want != nil && !minimock.Equal(*want, got) {
-			m.t.Errorf("QueryerMock.Update got unexpected parameters, want: %#v, got: %#v%s\n", *want, got, minimock.Diff(*want, got))
+	if mmUpdate.UpdateMock.defaultExpectation != nil {
+		mm_atomic.AddUint64(&mmUpdate.UpdateMock.defaultExpectation.Counter, 1)
+		mm_want := mmUpdate.UpdateMock.defaultExpectation.params
+		mm_got := QueryerMockUpdateParams{ctx, sql, args}
+		if mm_want != nil && !minimock.Equal(*mm_want, mm_got) {
+			mmUpdate.t.Errorf("QueryerMock.Update got unexpected parameters, want: %#v, got: %#v%s\n", *mm_want, mm_got, minimock.Diff(*mm_want, mm_got))
 		}
 
-		results := m.UpdateMock.defaultExpectation.results
-		if results == nil {
-			m.t.Fatal("No results are set for the QueryerMock.Update")
+		mm_results := mmUpdate.UpdateMock.defaultExpectation.results
+		if mm_results == nil {
+			mmUpdate.t.Fatal("No results are set for the QueryerMock.Update")
 		}
-		return (*results).r1, (*results).err
+		return (*mm_results).r1, (*mm_results).err
 	}
-	if m.funcUpdate != nil {
-		return m.funcUpdate(ctx, sql, args...)
+	if mmUpdate.funcUpdate != nil {
+		return mmUpdate.funcUpdate(ctx, sql, args...)
 	}
-	m.t.Fatalf("Unexpected call to QueryerMock.Update. %v %v %v", ctx, sql, args)
+	mmUpdate.t.Fatalf("Unexpected call to QueryerMock.Update. %v %v %v", ctx, sql, args)
 	return
 }
 
 // UpdateAfterCounter returns a count of finished QueryerMock.Update invocations
-func (m *QueryerMock) UpdateAfterCounter() uint64 {
-	return mm_atomic.LoadUint64(&m.afterUpdateCounter)
+func (mmUpdate *QueryerMock) UpdateAfterCounter() uint64 {
+	return mm_atomic.LoadUint64(&mmUpdate.afterUpdateCounter)
 }
 
 // UpdateBeforeCounter returns a count of QueryerMock.Update invocations
-func (m *QueryerMock) UpdateBeforeCounter() uint64 {
-	return mm_atomic.LoadUint64(&m.beforeUpdateCounter)
+func (mmUpdate *QueryerMock) UpdateBeforeCounter() uint64 {
+	return mm_atomic.LoadUint64(&mmUpdate.beforeUpdateCounter)
+}
+
+// Calls returns a list of arguments used in each call to QueryerMock.Update.
+// The list is in the same order as the calls were made (i.e. recent calls have a higher index)
+func (mmUpdate *mQueryerMockUpdate) Calls() []*QueryerMockUpdateParams {
+	mmUpdate.mutex.RLock()
+
+	argCopy := make([]*QueryerMockUpdateParams, len(mmUpdate.callArgs))
+	copy(argCopy, mmUpdate.callArgs)
+
+	mmUpdate.mutex.RUnlock()
+
+	return argCopy
 }
 
 // MinimockUpdateDone returns true if the count of the Update invocations corresponds
@@ -600,6 +730,9 @@ type mQueryerMockUpdateAndGetLastInsertID struct {
 	mock               *QueryerMock
 	defaultExpectation *QueryerMockUpdateAndGetLastInsertIDExpectation
 	expectations       []*QueryerMockUpdateAndGetLastInsertIDExpectation
+
+	callArgs []*QueryerMockUpdateAndGetLastInsertIDParams
+	mutex    sync.RWMutex
 }
 
 // QueryerMockUpdateAndGetLastInsertIDExpectation specifies expectation struct of the Queryer.UpdateAndGetLastInsertID
@@ -624,64 +757,75 @@ type QueryerMockUpdateAndGetLastInsertIDResults struct {
 }
 
 // Expect sets up expected params for Queryer.UpdateAndGetLastInsertID
-func (m *mQueryerMockUpdateAndGetLastInsertID) Expect(ctx context.Context, sql string, args ...interface{}) *mQueryerMockUpdateAndGetLastInsertID {
-	if m.mock.funcUpdateAndGetLastInsertID != nil {
-		m.mock.t.Fatalf("QueryerMock.UpdateAndGetLastInsertID mock is already set by Set")
+func (mmUpdateAndGetLastInsertID *mQueryerMockUpdateAndGetLastInsertID) Expect(ctx context.Context, sql string, args ...interface{}) *mQueryerMockUpdateAndGetLastInsertID {
+	if mmUpdateAndGetLastInsertID.mock.funcUpdateAndGetLastInsertID != nil {
+		mmUpdateAndGetLastInsertID.mock.t.Fatalf("QueryerMock.UpdateAndGetLastInsertID mock is already set by Set")
 	}
 
-	if m.defaultExpectation == nil {
-		m.defaultExpectation = &QueryerMockUpdateAndGetLastInsertIDExpectation{}
+	if mmUpdateAndGetLastInsertID.defaultExpectation == nil {
+		mmUpdateAndGetLastInsertID.defaultExpectation = &QueryerMockUpdateAndGetLastInsertIDExpectation{}
 	}
 
-	m.defaultExpectation.params = &QueryerMockUpdateAndGetLastInsertIDParams{ctx, sql, args}
-	for _, e := range m.expectations {
-		if minimock.Equal(e.params, m.defaultExpectation.params) {
-			m.mock.t.Fatalf("Expectation set by When has same params: %#v", *m.defaultExpectation.params)
+	mmUpdateAndGetLastInsertID.defaultExpectation.params = &QueryerMockUpdateAndGetLastInsertIDParams{ctx, sql, args}
+	for _, e := range mmUpdateAndGetLastInsertID.expectations {
+		if minimock.Equal(e.params, mmUpdateAndGetLastInsertID.defaultExpectation.params) {
+			mmUpdateAndGetLastInsertID.mock.t.Fatalf("Expectation set by When has same params: %#v", *mmUpdateAndGetLastInsertID.defaultExpectation.params)
 		}
 	}
 
-	return m
+	return mmUpdateAndGetLastInsertID
+}
+
+// Inspect accepts an inspector function that has same arguments as the Queryer.UpdateAndGetLastInsertID
+func (mmUpdateAndGetLastInsertID *mQueryerMockUpdateAndGetLastInsertID) Inspect(f func(ctx context.Context, sql string, args ...interface{})) *mQueryerMockUpdateAndGetLastInsertID {
+	if mmUpdateAndGetLastInsertID.mock.inspectFuncUpdateAndGetLastInsertID != nil {
+		mmUpdateAndGetLastInsertID.mock.t.Fatalf("Inspect function is already set for QueryerMock.UpdateAndGetLastInsertID")
+	}
+
+	mmUpdateAndGetLastInsertID.mock.inspectFuncUpdateAndGetLastInsertID = f
+
+	return mmUpdateAndGetLastInsertID
 }
 
 // Return sets up results that will be returned by Queryer.UpdateAndGetLastInsertID
-func (m *mQueryerMockUpdateAndGetLastInsertID) Return(i1 int64, err error) *QueryerMock {
-	if m.mock.funcUpdateAndGetLastInsertID != nil {
-		m.mock.t.Fatalf("QueryerMock.UpdateAndGetLastInsertID mock is already set by Set")
+func (mmUpdateAndGetLastInsertID *mQueryerMockUpdateAndGetLastInsertID) Return(i1 int64, err error) *QueryerMock {
+	if mmUpdateAndGetLastInsertID.mock.funcUpdateAndGetLastInsertID != nil {
+		mmUpdateAndGetLastInsertID.mock.t.Fatalf("QueryerMock.UpdateAndGetLastInsertID mock is already set by Set")
 	}
 
-	if m.defaultExpectation == nil {
-		m.defaultExpectation = &QueryerMockUpdateAndGetLastInsertIDExpectation{mock: m.mock}
+	if mmUpdateAndGetLastInsertID.defaultExpectation == nil {
+		mmUpdateAndGetLastInsertID.defaultExpectation = &QueryerMockUpdateAndGetLastInsertIDExpectation{mock: mmUpdateAndGetLastInsertID.mock}
 	}
-	m.defaultExpectation.results = &QueryerMockUpdateAndGetLastInsertIDResults{i1, err}
-	return m.mock
+	mmUpdateAndGetLastInsertID.defaultExpectation.results = &QueryerMockUpdateAndGetLastInsertIDResults{i1, err}
+	return mmUpdateAndGetLastInsertID.mock
 }
 
 //Set uses given function f to mock the Queryer.UpdateAndGetLastInsertID method
-func (m *mQueryerMockUpdateAndGetLastInsertID) Set(f func(ctx context.Context, sql string, args ...interface{}) (i1 int64, err error)) *QueryerMock {
-	if m.defaultExpectation != nil {
-		m.mock.t.Fatalf("Default expectation is already set for the Queryer.UpdateAndGetLastInsertID method")
+func (mmUpdateAndGetLastInsertID *mQueryerMockUpdateAndGetLastInsertID) Set(f func(ctx context.Context, sql string, args ...interface{}) (i1 int64, err error)) *QueryerMock {
+	if mmUpdateAndGetLastInsertID.defaultExpectation != nil {
+		mmUpdateAndGetLastInsertID.mock.t.Fatalf("Default expectation is already set for the Queryer.UpdateAndGetLastInsertID method")
 	}
 
-	if len(m.expectations) > 0 {
-		m.mock.t.Fatalf("Some expectations are already set for the Queryer.UpdateAndGetLastInsertID method")
+	if len(mmUpdateAndGetLastInsertID.expectations) > 0 {
+		mmUpdateAndGetLastInsertID.mock.t.Fatalf("Some expectations are already set for the Queryer.UpdateAndGetLastInsertID method")
 	}
 
-	m.mock.funcUpdateAndGetLastInsertID = f
-	return m.mock
+	mmUpdateAndGetLastInsertID.mock.funcUpdateAndGetLastInsertID = f
+	return mmUpdateAndGetLastInsertID.mock
 }
 
 // When sets expectation for the Queryer.UpdateAndGetLastInsertID which will trigger the result defined by the following
 // Then helper
-func (m *mQueryerMockUpdateAndGetLastInsertID) When(ctx context.Context, sql string, args ...interface{}) *QueryerMockUpdateAndGetLastInsertIDExpectation {
-	if m.mock.funcUpdateAndGetLastInsertID != nil {
-		m.mock.t.Fatalf("QueryerMock.UpdateAndGetLastInsertID mock is already set by Set")
+func (mmUpdateAndGetLastInsertID *mQueryerMockUpdateAndGetLastInsertID) When(ctx context.Context, sql string, args ...interface{}) *QueryerMockUpdateAndGetLastInsertIDExpectation {
+	if mmUpdateAndGetLastInsertID.mock.funcUpdateAndGetLastInsertID != nil {
+		mmUpdateAndGetLastInsertID.mock.t.Fatalf("QueryerMock.UpdateAndGetLastInsertID mock is already set by Set")
 	}
 
 	expectation := &QueryerMockUpdateAndGetLastInsertIDExpectation{
-		mock:   m.mock,
+		mock:   mmUpdateAndGetLastInsertID.mock,
 		params: &QueryerMockUpdateAndGetLastInsertIDParams{ctx, sql, args},
 	}
-	m.expectations = append(m.expectations, expectation)
+	mmUpdateAndGetLastInsertID.expectations = append(mmUpdateAndGetLastInsertID.expectations, expectation)
 	return expectation
 }
 
@@ -692,46 +836,70 @@ func (e *QueryerMockUpdateAndGetLastInsertIDExpectation) Then(i1 int64, err erro
 }
 
 // UpdateAndGetLastInsertID implements Queryer
-func (m *QueryerMock) UpdateAndGetLastInsertID(ctx context.Context, sql string, args ...interface{}) (i1 int64, err error) {
-	mm_atomic.AddUint64(&m.beforeUpdateAndGetLastInsertIDCounter, 1)
-	defer mm_atomic.AddUint64(&m.afterUpdateAndGetLastInsertIDCounter, 1)
+func (mmUpdateAndGetLastInsertID *QueryerMock) UpdateAndGetLastInsertID(ctx context.Context, sql string, args ...interface{}) (i1 int64, err error) {
+	mm_atomic.AddUint64(&mmUpdateAndGetLastInsertID.beforeUpdateAndGetLastInsertIDCounter, 1)
+	defer mm_atomic.AddUint64(&mmUpdateAndGetLastInsertID.afterUpdateAndGetLastInsertIDCounter, 1)
 
-	for _, e := range m.UpdateAndGetLastInsertIDMock.expectations {
-		if minimock.Equal(*e.params, QueryerMockUpdateAndGetLastInsertIDParams{ctx, sql, args}) {
+	if mmUpdateAndGetLastInsertID.inspectFuncUpdateAndGetLastInsertID != nil {
+		mmUpdateAndGetLastInsertID.inspectFuncUpdateAndGetLastInsertID(ctx, sql, args...)
+	}
+
+	mm_params := &QueryerMockUpdateAndGetLastInsertIDParams{ctx, sql, args}
+
+	// Record call args
+	mmUpdateAndGetLastInsertID.UpdateAndGetLastInsertIDMock.mutex.Lock()
+	mmUpdateAndGetLastInsertID.UpdateAndGetLastInsertIDMock.callArgs = append(mmUpdateAndGetLastInsertID.UpdateAndGetLastInsertIDMock.callArgs, mm_params)
+	mmUpdateAndGetLastInsertID.UpdateAndGetLastInsertIDMock.mutex.Unlock()
+
+	for _, e := range mmUpdateAndGetLastInsertID.UpdateAndGetLastInsertIDMock.expectations {
+		if minimock.Equal(e.params, mm_params) {
 			mm_atomic.AddUint64(&e.Counter, 1)
 			return e.results.i1, e.results.err
 		}
 	}
 
-	if m.UpdateAndGetLastInsertIDMock.defaultExpectation != nil {
-		mm_atomic.AddUint64(&m.UpdateAndGetLastInsertIDMock.defaultExpectation.Counter, 1)
-		want := m.UpdateAndGetLastInsertIDMock.defaultExpectation.params
-		got := QueryerMockUpdateAndGetLastInsertIDParams{ctx, sql, args}
-		if want != nil && !minimock.Equal(*want, got) {
-			m.t.Errorf("QueryerMock.UpdateAndGetLastInsertID got unexpected parameters, want: %#v, got: %#v%s\n", *want, got, minimock.Diff(*want, got))
+	if mmUpdateAndGetLastInsertID.UpdateAndGetLastInsertIDMock.defaultExpectation != nil {
+		mm_atomic.AddUint64(&mmUpdateAndGetLastInsertID.UpdateAndGetLastInsertIDMock.defaultExpectation.Counter, 1)
+		mm_want := mmUpdateAndGetLastInsertID.UpdateAndGetLastInsertIDMock.defaultExpectation.params
+		mm_got := QueryerMockUpdateAndGetLastInsertIDParams{ctx, sql, args}
+		if mm_want != nil && !minimock.Equal(*mm_want, mm_got) {
+			mmUpdateAndGetLastInsertID.t.Errorf("QueryerMock.UpdateAndGetLastInsertID got unexpected parameters, want: %#v, got: %#v%s\n", *mm_want, mm_got, minimock.Diff(*mm_want, mm_got))
 		}
 
-		results := m.UpdateAndGetLastInsertIDMock.defaultExpectation.results
-		if results == nil {
-			m.t.Fatal("No results are set for the QueryerMock.UpdateAndGetLastInsertID")
+		mm_results := mmUpdateAndGetLastInsertID.UpdateAndGetLastInsertIDMock.defaultExpectation.results
+		if mm_results == nil {
+			mmUpdateAndGetLastInsertID.t.Fatal("No results are set for the QueryerMock.UpdateAndGetLastInsertID")
 		}
-		return (*results).i1, (*results).err
+		return (*mm_results).i1, (*mm_results).err
 	}
-	if m.funcUpdateAndGetLastInsertID != nil {
-		return m.funcUpdateAndGetLastInsertID(ctx, sql, args...)
+	if mmUpdateAndGetLastInsertID.funcUpdateAndGetLastInsertID != nil {
+		return mmUpdateAndGetLastInsertID.funcUpdateAndGetLastInsertID(ctx, sql, args...)
 	}
-	m.t.Fatalf("Unexpected call to QueryerMock.UpdateAndGetLastInsertID. %v %v %v", ctx, sql, args)
+	mmUpdateAndGetLastInsertID.t.Fatalf("Unexpected call to QueryerMock.UpdateAndGetLastInsertID. %v %v %v", ctx, sql, args)
 	return
 }
 
 // UpdateAndGetLastInsertIDAfterCounter returns a count of finished QueryerMock.UpdateAndGetLastInsertID invocations
-func (m *QueryerMock) UpdateAndGetLastInsertIDAfterCounter() uint64 {
-	return mm_atomic.LoadUint64(&m.afterUpdateAndGetLastInsertIDCounter)
+func (mmUpdateAndGetLastInsertID *QueryerMock) UpdateAndGetLastInsertIDAfterCounter() uint64 {
+	return mm_atomic.LoadUint64(&mmUpdateAndGetLastInsertID.afterUpdateAndGetLastInsertIDCounter)
 }
 
 // UpdateAndGetLastInsertIDBeforeCounter returns a count of QueryerMock.UpdateAndGetLastInsertID invocations
-func (m *QueryerMock) UpdateAndGetLastInsertIDBeforeCounter() uint64 {
-	return mm_atomic.LoadUint64(&m.beforeUpdateAndGetLastInsertIDCounter)
+func (mmUpdateAndGetLastInsertID *QueryerMock) UpdateAndGetLastInsertIDBeforeCounter() uint64 {
+	return mm_atomic.LoadUint64(&mmUpdateAndGetLastInsertID.beforeUpdateAndGetLastInsertIDCounter)
+}
+
+// Calls returns a list of arguments used in each call to QueryerMock.UpdateAndGetLastInsertID.
+// The list is in the same order as the calls were made (i.e. recent calls have a higher index)
+func (mmUpdateAndGetLastInsertID *mQueryerMockUpdateAndGetLastInsertID) Calls() []*QueryerMockUpdateAndGetLastInsertIDParams {
+	mmUpdateAndGetLastInsertID.mutex.RLock()
+
+	argCopy := make([]*QueryerMockUpdateAndGetLastInsertIDParams, len(mmUpdateAndGetLastInsertID.callArgs))
+	copy(argCopy, mmUpdateAndGetLastInsertID.callArgs)
+
+	mmUpdateAndGetLastInsertID.mutex.RUnlock()
+
+	return argCopy
 }
 
 // MinimockUpdateAndGetLastInsertIDDone returns true if the count of the UpdateAndGetLastInsertID invocations corresponds
@@ -780,6 +948,9 @@ type mQueryerMockUpdateAndGetRowsAffected struct {
 	mock               *QueryerMock
 	defaultExpectation *QueryerMockUpdateAndGetRowsAffectedExpectation
 	expectations       []*QueryerMockUpdateAndGetRowsAffectedExpectation
+
+	callArgs []*QueryerMockUpdateAndGetRowsAffectedParams
+	mutex    sync.RWMutex
 }
 
 // QueryerMockUpdateAndGetRowsAffectedExpectation specifies expectation struct of the Queryer.UpdateAndGetRowsAffected
@@ -804,64 +975,75 @@ type QueryerMockUpdateAndGetRowsAffectedResults struct {
 }
 
 // Expect sets up expected params for Queryer.UpdateAndGetRowsAffected
-func (m *mQueryerMockUpdateAndGetRowsAffected) Expect(ctx context.Context, sql string, args ...interface{}) *mQueryerMockUpdateAndGetRowsAffected {
-	if m.mock.funcUpdateAndGetRowsAffected != nil {
-		m.mock.t.Fatalf("QueryerMock.UpdateAndGetRowsAffected mock is already set by Set")
+func (mmUpdateAndGetRowsAffected *mQueryerMockUpdateAndGetRowsAffected) Expect(ctx context.Context, sql string, args ...interface{}) *mQueryerMockUpdateAndGetRowsAffected {
+	if mmUpdateAndGetRowsAffected.mock.funcUpdateAndGetRowsAffected != nil {
+		mmUpdateAndGetRowsAffected.mock.t.Fatalf("QueryerMock.UpdateAndGetRowsAffected mock is already set by Set")
 	}
 
-	if m.defaultExpectation == nil {
-		m.defaultExpectation = &QueryerMockUpdateAndGetRowsAffectedExpectation{}
+	if mmUpdateAndGetRowsAffected.defaultExpectation == nil {
+		mmUpdateAndGetRowsAffected.defaultExpectation = &QueryerMockUpdateAndGetRowsAffectedExpectation{}
 	}
 
-	m.defaultExpectation.params = &QueryerMockUpdateAndGetRowsAffectedParams{ctx, sql, args}
-	for _, e := range m.expectations {
-		if minimock.Equal(e.params, m.defaultExpectation.params) {
-			m.mock.t.Fatalf("Expectation set by When has same params: %#v", *m.defaultExpectation.params)
+	mmUpdateAndGetRowsAffected.defaultExpectation.params = &QueryerMockUpdateAndGetRowsAffectedParams{ctx, sql, args}
+	for _, e := range mmUpdateAndGetRowsAffected.expectations {
+		if minimock.Equal(e.params, mmUpdateAndGetRowsAffected.defaultExpectation.params) {
+			mmUpdateAndGetRowsAffected.mock.t.Fatalf("Expectation set by When has same params: %#v", *mmUpdateAndGetRowsAffected.defaultExpectation.params)
 		}
 	}
 
-	return m
+	return mmUpdateAndGetRowsAffected
+}
+
+// Inspect accepts an inspector function that has same arguments as the Queryer.UpdateAndGetRowsAffected
+func (mmUpdateAndGetRowsAffected *mQueryerMockUpdateAndGetRowsAffected) Inspect(f func(ctx context.Context, sql string, args ...interface{})) *mQueryerMockUpdateAndGetRowsAffected {
+	if mmUpdateAndGetRowsAffected.mock.inspectFuncUpdateAndGetRowsAffected != nil {
+		mmUpdateAndGetRowsAffected.mock.t.Fatalf("Inspect function is already set for QueryerMock.UpdateAndGetRowsAffected")
+	}
+
+	mmUpdateAndGetRowsAffected.mock.inspectFuncUpdateAndGetRowsAffected = f
+
+	return mmUpdateAndGetRowsAffected
 }
 
 // Return sets up results that will be returned by Queryer.UpdateAndGetRowsAffected
-func (m *mQueryerMockUpdateAndGetRowsAffected) Return(i1 int64, err error) *QueryerMock {
-	if m.mock.funcUpdateAndGetRowsAffected != nil {
-		m.mock.t.Fatalf("QueryerMock.UpdateAndGetRowsAffected mock is already set by Set")
+func (mmUpdateAndGetRowsAffected *mQueryerMockUpdateAndGetRowsAffected) Return(i1 int64, err error) *QueryerMock {
+	if mmUpdateAndGetRowsAffected.mock.funcUpdateAndGetRowsAffected != nil {
+		mmUpdateAndGetRowsAffected.mock.t.Fatalf("QueryerMock.UpdateAndGetRowsAffected mock is already set by Set")
 	}
 
-	if m.defaultExpectation == nil {
-		m.defaultExpectation = &QueryerMockUpdateAndGetRowsAffectedExpectation{mock: m.mock}
+	if mmUpdateAndGetRowsAffected.defaultExpectation == nil {
+		mmUpdateAndGetRowsAffected.defaultExpectation = &QueryerMockUpdateAndGetRowsAffectedExpectation{mock: mmUpdateAndGetRowsAffected.mock}
 	}
-	m.defaultExpectation.results = &QueryerMockUpdateAndGetRowsAffectedResults{i1, err}
-	return m.mock
+	mmUpdateAndGetRowsAffected.defaultExpectation.results = &QueryerMockUpdateAndGetRowsAffectedResults{i1, err}
+	return mmUpdateAndGetRowsAffected.mock
 }
 
 //Set uses given function f to mock the Queryer.UpdateAndGetRowsAffected method
-func (m *mQueryerMockUpdateAndGetRowsAffected) Set(f func(ctx context.Context, sql string, args ...interface{}) (i1 int64, err error)) *QueryerMock {
-	if m.defaultExpectation != nil {
-		m.mock.t.Fatalf("Default expectation is already set for the Queryer.UpdateAndGetRowsAffected method")
+func (mmUpdateAndGetRowsAffected *mQueryerMockUpdateAndGetRowsAffected) Set(f func(ctx context.Context, sql string, args ...interface{}) (i1 int64, err error)) *QueryerMock {
+	if mmUpdateAndGetRowsAffected.defaultExpectation != nil {
+		mmUpdateAndGetRowsAffected.mock.t.Fatalf("Default expectation is already set for the Queryer.UpdateAndGetRowsAffected method")
 	}
 
-	if len(m.expectations) > 0 {
-		m.mock.t.Fatalf("Some expectations are already set for the Queryer.UpdateAndGetRowsAffected method")
+	if len(mmUpdateAndGetRowsAffected.expectations) > 0 {
+		mmUpdateAndGetRowsAffected.mock.t.Fatalf("Some expectations are already set for the Queryer.UpdateAndGetRowsAffected method")
 	}
 
-	m.mock.funcUpdateAndGetRowsAffected = f
-	return m.mock
+	mmUpdateAndGetRowsAffected.mock.funcUpdateAndGetRowsAffected = f
+	return mmUpdateAndGetRowsAffected.mock
 }
 
 // When sets expectation for the Queryer.UpdateAndGetRowsAffected which will trigger the result defined by the following
 // Then helper
-func (m *mQueryerMockUpdateAndGetRowsAffected) When(ctx context.Context, sql string, args ...interface{}) *QueryerMockUpdateAndGetRowsAffectedExpectation {
-	if m.mock.funcUpdateAndGetRowsAffected != nil {
-		m.mock.t.Fatalf("QueryerMock.UpdateAndGetRowsAffected mock is already set by Set")
+func (mmUpdateAndGetRowsAffected *mQueryerMockUpdateAndGetRowsAffected) When(ctx context.Context, sql string, args ...interface{}) *QueryerMockUpdateAndGetRowsAffectedExpectation {
+	if mmUpdateAndGetRowsAffected.mock.funcUpdateAndGetRowsAffected != nil {
+		mmUpdateAndGetRowsAffected.mock.t.Fatalf("QueryerMock.UpdateAndGetRowsAffected mock is already set by Set")
 	}
 
 	expectation := &QueryerMockUpdateAndGetRowsAffectedExpectation{
-		mock:   m.mock,
+		mock:   mmUpdateAndGetRowsAffected.mock,
 		params: &QueryerMockUpdateAndGetRowsAffectedParams{ctx, sql, args},
 	}
-	m.expectations = append(m.expectations, expectation)
+	mmUpdateAndGetRowsAffected.expectations = append(mmUpdateAndGetRowsAffected.expectations, expectation)
 	return expectation
 }
 
@@ -872,46 +1054,70 @@ func (e *QueryerMockUpdateAndGetRowsAffectedExpectation) Then(i1 int64, err erro
 }
 
 // UpdateAndGetRowsAffected implements Queryer
-func (m *QueryerMock) UpdateAndGetRowsAffected(ctx context.Context, sql string, args ...interface{}) (i1 int64, err error) {
-	mm_atomic.AddUint64(&m.beforeUpdateAndGetRowsAffectedCounter, 1)
-	defer mm_atomic.AddUint64(&m.afterUpdateAndGetRowsAffectedCounter, 1)
+func (mmUpdateAndGetRowsAffected *QueryerMock) UpdateAndGetRowsAffected(ctx context.Context, sql string, args ...interface{}) (i1 int64, err error) {
+	mm_atomic.AddUint64(&mmUpdateAndGetRowsAffected.beforeUpdateAndGetRowsAffectedCounter, 1)
+	defer mm_atomic.AddUint64(&mmUpdateAndGetRowsAffected.afterUpdateAndGetRowsAffectedCounter, 1)
 
-	for _, e := range m.UpdateAndGetRowsAffectedMock.expectations {
-		if minimock.Equal(*e.params, QueryerMockUpdateAndGetRowsAffectedParams{ctx, sql, args}) {
+	if mmUpdateAndGetRowsAffected.inspectFuncUpdateAndGetRowsAffected != nil {
+		mmUpdateAndGetRowsAffected.inspectFuncUpdateAndGetRowsAffected(ctx, sql, args...)
+	}
+
+	mm_params := &QueryerMockUpdateAndGetRowsAffectedParams{ctx, sql, args}
+
+	// Record call args
+	mmUpdateAndGetRowsAffected.UpdateAndGetRowsAffectedMock.mutex.Lock()
+	mmUpdateAndGetRowsAffected.UpdateAndGetRowsAffectedMock.callArgs = append(mmUpdateAndGetRowsAffected.UpdateAndGetRowsAffectedMock.callArgs, mm_params)
+	mmUpdateAndGetRowsAffected.UpdateAndGetRowsAffectedMock.mutex.Unlock()
+
+	for _, e := range mmUpdateAndGetRowsAffected.UpdateAndGetRowsAffectedMock.expectations {
+		if minimock.Equal(e.params, mm_params) {
 			mm_atomic.AddUint64(&e.Counter, 1)
 			return e.results.i1, e.results.err
 		}
 	}
 
-	if m.UpdateAndGetRowsAffectedMock.defaultExpectation != nil {
-		mm_atomic.AddUint64(&m.UpdateAndGetRowsAffectedMock.defaultExpectation.Counter, 1)
-		want := m.UpdateAndGetRowsAffectedMock.defaultExpectation.params
-		got := QueryerMockUpdateAndGetRowsAffectedParams{ctx, sql, args}
-		if want != nil && !minimock.Equal(*want, got) {
-			m.t.Errorf("QueryerMock.UpdateAndGetRowsAffected got unexpected parameters, want: %#v, got: %#v%s\n", *want, got, minimock.Diff(*want, got))
+	if mmUpdateAndGetRowsAffected.UpdateAndGetRowsAffectedMock.defaultExpectation != nil {
+		mm_atomic.AddUint64(&mmUpdateAndGetRowsAffected.UpdateAndGetRowsAffectedMock.defaultExpectation.Counter, 1)
+		mm_want := mmUpdateAndGetRowsAffected.UpdateAndGetRowsAffectedMock.defaultExpectation.params
+		mm_got := QueryerMockUpdateAndGetRowsAffectedParams{ctx, sql, args}
+		if mm_want != nil && !minimock.Equal(*mm_want, mm_got) {
+			mmUpdateAndGetRowsAffected.t.Errorf("QueryerMock.UpdateAndGetRowsAffected got unexpected parameters, want: %#v, got: %#v%s\n", *mm_want, mm_got, minimock.Diff(*mm_want, mm_got))
 		}
 
-		results := m.UpdateAndGetRowsAffectedMock.defaultExpectation.results
-		if results == nil {
-			m.t.Fatal("No results are set for the QueryerMock.UpdateAndGetRowsAffected")
+		mm_results := mmUpdateAndGetRowsAffected.UpdateAndGetRowsAffectedMock.defaultExpectation.results
+		if mm_results == nil {
+			mmUpdateAndGetRowsAffected.t.Fatal("No results are set for the QueryerMock.UpdateAndGetRowsAffected")
 		}
-		return (*results).i1, (*results).err
+		return (*mm_results).i1, (*mm_results).err
 	}
-	if m.funcUpdateAndGetRowsAffected != nil {
-		return m.funcUpdateAndGetRowsAffected(ctx, sql, args...)
+	if mmUpdateAndGetRowsAffected.funcUpdateAndGetRowsAffected != nil {
+		return mmUpdateAndGetRowsAffected.funcUpdateAndGetRowsAffected(ctx, sql, args...)
 	}
-	m.t.Fatalf("Unexpected call to QueryerMock.UpdateAndGetRowsAffected. %v %v %v", ctx, sql, args)
+	mmUpdateAndGetRowsAffected.t.Fatalf("Unexpected call to QueryerMock.UpdateAndGetRowsAffected. %v %v %v", ctx, sql, args)
 	return
 }
 
 // UpdateAndGetRowsAffectedAfterCounter returns a count of finished QueryerMock.UpdateAndGetRowsAffected invocations
-func (m *QueryerMock) UpdateAndGetRowsAffectedAfterCounter() uint64 {
-	return mm_atomic.LoadUint64(&m.afterUpdateAndGetRowsAffectedCounter)
+func (mmUpdateAndGetRowsAffected *QueryerMock) UpdateAndGetRowsAffectedAfterCounter() uint64 {
+	return mm_atomic.LoadUint64(&mmUpdateAndGetRowsAffected.afterUpdateAndGetRowsAffectedCounter)
 }
 
 // UpdateAndGetRowsAffectedBeforeCounter returns a count of QueryerMock.UpdateAndGetRowsAffected invocations
-func (m *QueryerMock) UpdateAndGetRowsAffectedBeforeCounter() uint64 {
-	return mm_atomic.LoadUint64(&m.beforeUpdateAndGetRowsAffectedCounter)
+func (mmUpdateAndGetRowsAffected *QueryerMock) UpdateAndGetRowsAffectedBeforeCounter() uint64 {
+	return mm_atomic.LoadUint64(&mmUpdateAndGetRowsAffected.beforeUpdateAndGetRowsAffectedCounter)
+}
+
+// Calls returns a list of arguments used in each call to QueryerMock.UpdateAndGetRowsAffected.
+// The list is in the same order as the calls were made (i.e. recent calls have a higher index)
+func (mmUpdateAndGetRowsAffected *mQueryerMockUpdateAndGetRowsAffected) Calls() []*QueryerMockUpdateAndGetRowsAffectedParams {
+	mmUpdateAndGetRowsAffected.mutex.RLock()
+
+	argCopy := make([]*QueryerMockUpdateAndGetRowsAffectedParams, len(mmUpdateAndGetRowsAffected.callArgs))
+	copy(argCopy, mmUpdateAndGetRowsAffected.callArgs)
+
+	mmUpdateAndGetRowsAffected.mutex.RUnlock()
+
+	return argCopy
 }
 
 // MinimockUpdateAndGetRowsAffectedDone returns true if the count of the UpdateAndGetRowsAffected invocations corresponds
