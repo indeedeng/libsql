@@ -5,10 +5,11 @@ package libsql
 import (
 	"context"
 	"database/sql"
+	"sync"
 	mm_atomic "sync/atomic"
 	mm_time "time"
 
-	"github.com/gojuno/minimock"
+	"github.com/gojuno/minimock/v3"
 )
 
 // SqlQueryerMock implements sqlQueryer
@@ -16,11 +17,13 @@ type SqlQueryerMock struct {
 	t minimock.Tester
 
 	funcExec          func(ctx context.Context, query string, args ...interface{}) (r1 sql.Result, err error)
+	inspectFuncExec   func(ctx context.Context, query string, args ...interface{})
 	afterExecCounter  uint64
 	beforeExecCounter uint64
 	ExecMock          mSqlQueryerMockExec
 
 	funcQuery          func(ctx context.Context, query string, args ...interface{}) (s1 sqlRows, err error)
+	inspectFuncQuery   func(ctx context.Context, query string, args ...interface{})
 	afterQueryCounter  uint64
 	beforeQueryCounter uint64
 	QueryMock          mSqlQueryerMockQuery
@@ -32,8 +35,12 @@ func NewSqlQueryerMock(t minimock.Tester) *SqlQueryerMock {
 	if controller, ok := t.(minimock.MockController); ok {
 		controller.RegisterMocker(m)
 	}
+
 	m.ExecMock = mSqlQueryerMockExec{mock: m}
+	m.ExecMock.callArgs = []*SqlQueryerMockExecParams{}
+
 	m.QueryMock = mSqlQueryerMockQuery{mock: m}
+	m.QueryMock.callArgs = []*SqlQueryerMockQueryParams{}
 
 	return m
 }
@@ -42,6 +49,9 @@ type mSqlQueryerMockExec struct {
 	mock               *SqlQueryerMock
 	defaultExpectation *SqlQueryerMockExecExpectation
 	expectations       []*SqlQueryerMockExecExpectation
+
+	callArgs []*SqlQueryerMockExecParams
+	mutex    sync.RWMutex
 }
 
 // SqlQueryerMockExecExpectation specifies expectation struct of the sqlQueryer.Exec
@@ -66,64 +76,75 @@ type SqlQueryerMockExecResults struct {
 }
 
 // Expect sets up expected params for sqlQueryer.Exec
-func (m *mSqlQueryerMockExec) Expect(ctx context.Context, query string, args ...interface{}) *mSqlQueryerMockExec {
-	if m.mock.funcExec != nil {
-		m.mock.t.Fatalf("SqlQueryerMock.Exec mock is already set by Set")
+func (mmExec *mSqlQueryerMockExec) Expect(ctx context.Context, query string, args ...interface{}) *mSqlQueryerMockExec {
+	if mmExec.mock.funcExec != nil {
+		mmExec.mock.t.Fatalf("SqlQueryerMock.Exec mock is already set by Set")
 	}
 
-	if m.defaultExpectation == nil {
-		m.defaultExpectation = &SqlQueryerMockExecExpectation{}
+	if mmExec.defaultExpectation == nil {
+		mmExec.defaultExpectation = &SqlQueryerMockExecExpectation{}
 	}
 
-	m.defaultExpectation.params = &SqlQueryerMockExecParams{ctx, query, args}
-	for _, e := range m.expectations {
-		if minimock.Equal(e.params, m.defaultExpectation.params) {
-			m.mock.t.Fatalf("Expectation set by When has same params: %#v", *m.defaultExpectation.params)
+	mmExec.defaultExpectation.params = &SqlQueryerMockExecParams{ctx, query, args}
+	for _, e := range mmExec.expectations {
+		if minimock.Equal(e.params, mmExec.defaultExpectation.params) {
+			mmExec.mock.t.Fatalf("Expectation set by When has same params: %#v", *mmExec.defaultExpectation.params)
 		}
 	}
 
-	return m
+	return mmExec
+}
+
+// Inspect accepts an inspector function that has same arguments as the sqlQueryer.Exec
+func (mmExec *mSqlQueryerMockExec) Inspect(f func(ctx context.Context, query string, args ...interface{})) *mSqlQueryerMockExec {
+	if mmExec.mock.inspectFuncExec != nil {
+		mmExec.mock.t.Fatalf("Inspect function is already set for SqlQueryerMock.Exec")
+	}
+
+	mmExec.mock.inspectFuncExec = f
+
+	return mmExec
 }
 
 // Return sets up results that will be returned by sqlQueryer.Exec
-func (m *mSqlQueryerMockExec) Return(r1 sql.Result, err error) *SqlQueryerMock {
-	if m.mock.funcExec != nil {
-		m.mock.t.Fatalf("SqlQueryerMock.Exec mock is already set by Set")
+func (mmExec *mSqlQueryerMockExec) Return(r1 sql.Result, err error) *SqlQueryerMock {
+	if mmExec.mock.funcExec != nil {
+		mmExec.mock.t.Fatalf("SqlQueryerMock.Exec mock is already set by Set")
 	}
 
-	if m.defaultExpectation == nil {
-		m.defaultExpectation = &SqlQueryerMockExecExpectation{mock: m.mock}
+	if mmExec.defaultExpectation == nil {
+		mmExec.defaultExpectation = &SqlQueryerMockExecExpectation{mock: mmExec.mock}
 	}
-	m.defaultExpectation.results = &SqlQueryerMockExecResults{r1, err}
-	return m.mock
+	mmExec.defaultExpectation.results = &SqlQueryerMockExecResults{r1, err}
+	return mmExec.mock
 }
 
 //Set uses given function f to mock the sqlQueryer.Exec method
-func (m *mSqlQueryerMockExec) Set(f func(ctx context.Context, query string, args ...interface{}) (r1 sql.Result, err error)) *SqlQueryerMock {
-	if m.defaultExpectation != nil {
-		m.mock.t.Fatalf("Default expectation is already set for the sqlQueryer.Exec method")
+func (mmExec *mSqlQueryerMockExec) Set(f func(ctx context.Context, query string, args ...interface{}) (r1 sql.Result, err error)) *SqlQueryerMock {
+	if mmExec.defaultExpectation != nil {
+		mmExec.mock.t.Fatalf("Default expectation is already set for the sqlQueryer.Exec method")
 	}
 
-	if len(m.expectations) > 0 {
-		m.mock.t.Fatalf("Some expectations are already set for the sqlQueryer.Exec method")
+	if len(mmExec.expectations) > 0 {
+		mmExec.mock.t.Fatalf("Some expectations are already set for the sqlQueryer.Exec method")
 	}
 
-	m.mock.funcExec = f
-	return m.mock
+	mmExec.mock.funcExec = f
+	return mmExec.mock
 }
 
 // When sets expectation for the sqlQueryer.Exec which will trigger the result defined by the following
 // Then helper
-func (m *mSqlQueryerMockExec) When(ctx context.Context, query string, args ...interface{}) *SqlQueryerMockExecExpectation {
-	if m.mock.funcExec != nil {
-		m.mock.t.Fatalf("SqlQueryerMock.Exec mock is already set by Set")
+func (mmExec *mSqlQueryerMockExec) When(ctx context.Context, query string, args ...interface{}) *SqlQueryerMockExecExpectation {
+	if mmExec.mock.funcExec != nil {
+		mmExec.mock.t.Fatalf("SqlQueryerMock.Exec mock is already set by Set")
 	}
 
 	expectation := &SqlQueryerMockExecExpectation{
-		mock:   m.mock,
+		mock:   mmExec.mock,
 		params: &SqlQueryerMockExecParams{ctx, query, args},
 	}
-	m.expectations = append(m.expectations, expectation)
+	mmExec.expectations = append(mmExec.expectations, expectation)
 	return expectation
 }
 
@@ -134,46 +155,70 @@ func (e *SqlQueryerMockExecExpectation) Then(r1 sql.Result, err error) *SqlQuery
 }
 
 // Exec implements sqlQueryer
-func (m *SqlQueryerMock) Exec(ctx context.Context, query string, args ...interface{}) (r1 sql.Result, err error) {
-	mm_atomic.AddUint64(&m.beforeExecCounter, 1)
-	defer mm_atomic.AddUint64(&m.afterExecCounter, 1)
+func (mmExec *SqlQueryerMock) Exec(ctx context.Context, query string, args ...interface{}) (r1 sql.Result, err error) {
+	mm_atomic.AddUint64(&mmExec.beforeExecCounter, 1)
+	defer mm_atomic.AddUint64(&mmExec.afterExecCounter, 1)
 
-	for _, e := range m.ExecMock.expectations {
-		if minimock.Equal(*e.params, SqlQueryerMockExecParams{ctx, query, args}) {
+	if mmExec.inspectFuncExec != nil {
+		mmExec.inspectFuncExec(ctx, query, args...)
+	}
+
+	mm_params := &SqlQueryerMockExecParams{ctx, query, args}
+
+	// Record call args
+	mmExec.ExecMock.mutex.Lock()
+	mmExec.ExecMock.callArgs = append(mmExec.ExecMock.callArgs, mm_params)
+	mmExec.ExecMock.mutex.Unlock()
+
+	for _, e := range mmExec.ExecMock.expectations {
+		if minimock.Equal(e.params, mm_params) {
 			mm_atomic.AddUint64(&e.Counter, 1)
 			return e.results.r1, e.results.err
 		}
 	}
 
-	if m.ExecMock.defaultExpectation != nil {
-		mm_atomic.AddUint64(&m.ExecMock.defaultExpectation.Counter, 1)
-		want := m.ExecMock.defaultExpectation.params
-		got := SqlQueryerMockExecParams{ctx, query, args}
-		if want != nil && !minimock.Equal(*want, got) {
-			m.t.Errorf("SqlQueryerMock.Exec got unexpected parameters, want: %#v, got: %#v%s\n", *want, got, minimock.Diff(*want, got))
+	if mmExec.ExecMock.defaultExpectation != nil {
+		mm_atomic.AddUint64(&mmExec.ExecMock.defaultExpectation.Counter, 1)
+		mm_want := mmExec.ExecMock.defaultExpectation.params
+		mm_got := SqlQueryerMockExecParams{ctx, query, args}
+		if mm_want != nil && !minimock.Equal(*mm_want, mm_got) {
+			mmExec.t.Errorf("SqlQueryerMock.Exec got unexpected parameters, want: %#v, got: %#v%s\n", *mm_want, mm_got, minimock.Diff(*mm_want, mm_got))
 		}
 
-		results := m.ExecMock.defaultExpectation.results
-		if results == nil {
-			m.t.Fatal("No results are set for the SqlQueryerMock.Exec")
+		mm_results := mmExec.ExecMock.defaultExpectation.results
+		if mm_results == nil {
+			mmExec.t.Fatal("No results are set for the SqlQueryerMock.Exec")
 		}
-		return (*results).r1, (*results).err
+		return (*mm_results).r1, (*mm_results).err
 	}
-	if m.funcExec != nil {
-		return m.funcExec(ctx, query, args...)
+	if mmExec.funcExec != nil {
+		return mmExec.funcExec(ctx, query, args...)
 	}
-	m.t.Fatalf("Unexpected call to SqlQueryerMock.Exec. %v %v %v", ctx, query, args)
+	mmExec.t.Fatalf("Unexpected call to SqlQueryerMock.Exec. %v %v %v", ctx, query, args)
 	return
 }
 
 // ExecAfterCounter returns a count of finished SqlQueryerMock.Exec invocations
-func (m *SqlQueryerMock) ExecAfterCounter() uint64 {
-	return mm_atomic.LoadUint64(&m.afterExecCounter)
+func (mmExec *SqlQueryerMock) ExecAfterCounter() uint64 {
+	return mm_atomic.LoadUint64(&mmExec.afterExecCounter)
 }
 
 // ExecBeforeCounter returns a count of SqlQueryerMock.Exec invocations
-func (m *SqlQueryerMock) ExecBeforeCounter() uint64 {
-	return mm_atomic.LoadUint64(&m.beforeExecCounter)
+func (mmExec *SqlQueryerMock) ExecBeforeCounter() uint64 {
+	return mm_atomic.LoadUint64(&mmExec.beforeExecCounter)
+}
+
+// Calls returns a list of arguments used in each call to SqlQueryerMock.Exec.
+// The list is in the same order as the calls were made (i.e. recent calls have a higher index)
+func (mmExec *mSqlQueryerMockExec) Calls() []*SqlQueryerMockExecParams {
+	mmExec.mutex.RLock()
+
+	argCopy := make([]*SqlQueryerMockExecParams, len(mmExec.callArgs))
+	copy(argCopy, mmExec.callArgs)
+
+	mmExec.mutex.RUnlock()
+
+	return argCopy
 }
 
 // MinimockExecDone returns true if the count of the Exec invocations corresponds
@@ -222,6 +267,9 @@ type mSqlQueryerMockQuery struct {
 	mock               *SqlQueryerMock
 	defaultExpectation *SqlQueryerMockQueryExpectation
 	expectations       []*SqlQueryerMockQueryExpectation
+
+	callArgs []*SqlQueryerMockQueryParams
+	mutex    sync.RWMutex
 }
 
 // SqlQueryerMockQueryExpectation specifies expectation struct of the sqlQueryer.Query
@@ -246,64 +294,75 @@ type SqlQueryerMockQueryResults struct {
 }
 
 // Expect sets up expected params for sqlQueryer.Query
-func (m *mSqlQueryerMockQuery) Expect(ctx context.Context, query string, args ...interface{}) *mSqlQueryerMockQuery {
-	if m.mock.funcQuery != nil {
-		m.mock.t.Fatalf("SqlQueryerMock.Query mock is already set by Set")
+func (mmQuery *mSqlQueryerMockQuery) Expect(ctx context.Context, query string, args ...interface{}) *mSqlQueryerMockQuery {
+	if mmQuery.mock.funcQuery != nil {
+		mmQuery.mock.t.Fatalf("SqlQueryerMock.Query mock is already set by Set")
 	}
 
-	if m.defaultExpectation == nil {
-		m.defaultExpectation = &SqlQueryerMockQueryExpectation{}
+	if mmQuery.defaultExpectation == nil {
+		mmQuery.defaultExpectation = &SqlQueryerMockQueryExpectation{}
 	}
 
-	m.defaultExpectation.params = &SqlQueryerMockQueryParams{ctx, query, args}
-	for _, e := range m.expectations {
-		if minimock.Equal(e.params, m.defaultExpectation.params) {
-			m.mock.t.Fatalf("Expectation set by When has same params: %#v", *m.defaultExpectation.params)
+	mmQuery.defaultExpectation.params = &SqlQueryerMockQueryParams{ctx, query, args}
+	for _, e := range mmQuery.expectations {
+		if minimock.Equal(e.params, mmQuery.defaultExpectation.params) {
+			mmQuery.mock.t.Fatalf("Expectation set by When has same params: %#v", *mmQuery.defaultExpectation.params)
 		}
 	}
 
-	return m
+	return mmQuery
+}
+
+// Inspect accepts an inspector function that has same arguments as the sqlQueryer.Query
+func (mmQuery *mSqlQueryerMockQuery) Inspect(f func(ctx context.Context, query string, args ...interface{})) *mSqlQueryerMockQuery {
+	if mmQuery.mock.inspectFuncQuery != nil {
+		mmQuery.mock.t.Fatalf("Inspect function is already set for SqlQueryerMock.Query")
+	}
+
+	mmQuery.mock.inspectFuncQuery = f
+
+	return mmQuery
 }
 
 // Return sets up results that will be returned by sqlQueryer.Query
-func (m *mSqlQueryerMockQuery) Return(s1 sqlRows, err error) *SqlQueryerMock {
-	if m.mock.funcQuery != nil {
-		m.mock.t.Fatalf("SqlQueryerMock.Query mock is already set by Set")
+func (mmQuery *mSqlQueryerMockQuery) Return(s1 sqlRows, err error) *SqlQueryerMock {
+	if mmQuery.mock.funcQuery != nil {
+		mmQuery.mock.t.Fatalf("SqlQueryerMock.Query mock is already set by Set")
 	}
 
-	if m.defaultExpectation == nil {
-		m.defaultExpectation = &SqlQueryerMockQueryExpectation{mock: m.mock}
+	if mmQuery.defaultExpectation == nil {
+		mmQuery.defaultExpectation = &SqlQueryerMockQueryExpectation{mock: mmQuery.mock}
 	}
-	m.defaultExpectation.results = &SqlQueryerMockQueryResults{s1, err}
-	return m.mock
+	mmQuery.defaultExpectation.results = &SqlQueryerMockQueryResults{s1, err}
+	return mmQuery.mock
 }
 
 //Set uses given function f to mock the sqlQueryer.Query method
-func (m *mSqlQueryerMockQuery) Set(f func(ctx context.Context, query string, args ...interface{}) (s1 sqlRows, err error)) *SqlQueryerMock {
-	if m.defaultExpectation != nil {
-		m.mock.t.Fatalf("Default expectation is already set for the sqlQueryer.Query method")
+func (mmQuery *mSqlQueryerMockQuery) Set(f func(ctx context.Context, query string, args ...interface{}) (s1 sqlRows, err error)) *SqlQueryerMock {
+	if mmQuery.defaultExpectation != nil {
+		mmQuery.mock.t.Fatalf("Default expectation is already set for the sqlQueryer.Query method")
 	}
 
-	if len(m.expectations) > 0 {
-		m.mock.t.Fatalf("Some expectations are already set for the sqlQueryer.Query method")
+	if len(mmQuery.expectations) > 0 {
+		mmQuery.mock.t.Fatalf("Some expectations are already set for the sqlQueryer.Query method")
 	}
 
-	m.mock.funcQuery = f
-	return m.mock
+	mmQuery.mock.funcQuery = f
+	return mmQuery.mock
 }
 
 // When sets expectation for the sqlQueryer.Query which will trigger the result defined by the following
 // Then helper
-func (m *mSqlQueryerMockQuery) When(ctx context.Context, query string, args ...interface{}) *SqlQueryerMockQueryExpectation {
-	if m.mock.funcQuery != nil {
-		m.mock.t.Fatalf("SqlQueryerMock.Query mock is already set by Set")
+func (mmQuery *mSqlQueryerMockQuery) When(ctx context.Context, query string, args ...interface{}) *SqlQueryerMockQueryExpectation {
+	if mmQuery.mock.funcQuery != nil {
+		mmQuery.mock.t.Fatalf("SqlQueryerMock.Query mock is already set by Set")
 	}
 
 	expectation := &SqlQueryerMockQueryExpectation{
-		mock:   m.mock,
+		mock:   mmQuery.mock,
 		params: &SqlQueryerMockQueryParams{ctx, query, args},
 	}
-	m.expectations = append(m.expectations, expectation)
+	mmQuery.expectations = append(mmQuery.expectations, expectation)
 	return expectation
 }
 
@@ -314,46 +373,70 @@ func (e *SqlQueryerMockQueryExpectation) Then(s1 sqlRows, err error) *SqlQueryer
 }
 
 // Query implements sqlQueryer
-func (m *SqlQueryerMock) Query(ctx context.Context, query string, args ...interface{}) (s1 sqlRows, err error) {
-	mm_atomic.AddUint64(&m.beforeQueryCounter, 1)
-	defer mm_atomic.AddUint64(&m.afterQueryCounter, 1)
+func (mmQuery *SqlQueryerMock) Query(ctx context.Context, query string, args ...interface{}) (s1 sqlRows, err error) {
+	mm_atomic.AddUint64(&mmQuery.beforeQueryCounter, 1)
+	defer mm_atomic.AddUint64(&mmQuery.afterQueryCounter, 1)
 
-	for _, e := range m.QueryMock.expectations {
-		if minimock.Equal(*e.params, SqlQueryerMockQueryParams{ctx, query, args}) {
+	if mmQuery.inspectFuncQuery != nil {
+		mmQuery.inspectFuncQuery(ctx, query, args...)
+	}
+
+	mm_params := &SqlQueryerMockQueryParams{ctx, query, args}
+
+	// Record call args
+	mmQuery.QueryMock.mutex.Lock()
+	mmQuery.QueryMock.callArgs = append(mmQuery.QueryMock.callArgs, mm_params)
+	mmQuery.QueryMock.mutex.Unlock()
+
+	for _, e := range mmQuery.QueryMock.expectations {
+		if minimock.Equal(e.params, mm_params) {
 			mm_atomic.AddUint64(&e.Counter, 1)
 			return e.results.s1, e.results.err
 		}
 	}
 
-	if m.QueryMock.defaultExpectation != nil {
-		mm_atomic.AddUint64(&m.QueryMock.defaultExpectation.Counter, 1)
-		want := m.QueryMock.defaultExpectation.params
-		got := SqlQueryerMockQueryParams{ctx, query, args}
-		if want != nil && !minimock.Equal(*want, got) {
-			m.t.Errorf("SqlQueryerMock.Query got unexpected parameters, want: %#v, got: %#v%s\n", *want, got, minimock.Diff(*want, got))
+	if mmQuery.QueryMock.defaultExpectation != nil {
+		mm_atomic.AddUint64(&mmQuery.QueryMock.defaultExpectation.Counter, 1)
+		mm_want := mmQuery.QueryMock.defaultExpectation.params
+		mm_got := SqlQueryerMockQueryParams{ctx, query, args}
+		if mm_want != nil && !minimock.Equal(*mm_want, mm_got) {
+			mmQuery.t.Errorf("SqlQueryerMock.Query got unexpected parameters, want: %#v, got: %#v%s\n", *mm_want, mm_got, minimock.Diff(*mm_want, mm_got))
 		}
 
-		results := m.QueryMock.defaultExpectation.results
-		if results == nil {
-			m.t.Fatal("No results are set for the SqlQueryerMock.Query")
+		mm_results := mmQuery.QueryMock.defaultExpectation.results
+		if mm_results == nil {
+			mmQuery.t.Fatal("No results are set for the SqlQueryerMock.Query")
 		}
-		return (*results).s1, (*results).err
+		return (*mm_results).s1, (*mm_results).err
 	}
-	if m.funcQuery != nil {
-		return m.funcQuery(ctx, query, args...)
+	if mmQuery.funcQuery != nil {
+		return mmQuery.funcQuery(ctx, query, args...)
 	}
-	m.t.Fatalf("Unexpected call to SqlQueryerMock.Query. %v %v %v", ctx, query, args)
+	mmQuery.t.Fatalf("Unexpected call to SqlQueryerMock.Query. %v %v %v", ctx, query, args)
 	return
 }
 
 // QueryAfterCounter returns a count of finished SqlQueryerMock.Query invocations
-func (m *SqlQueryerMock) QueryAfterCounter() uint64 {
-	return mm_atomic.LoadUint64(&m.afterQueryCounter)
+func (mmQuery *SqlQueryerMock) QueryAfterCounter() uint64 {
+	return mm_atomic.LoadUint64(&mmQuery.afterQueryCounter)
 }
 
 // QueryBeforeCounter returns a count of SqlQueryerMock.Query invocations
-func (m *SqlQueryerMock) QueryBeforeCounter() uint64 {
-	return mm_atomic.LoadUint64(&m.beforeQueryCounter)
+func (mmQuery *SqlQueryerMock) QueryBeforeCounter() uint64 {
+	return mm_atomic.LoadUint64(&mmQuery.beforeQueryCounter)
+}
+
+// Calls returns a list of arguments used in each call to SqlQueryerMock.Query.
+// The list is in the same order as the calls were made (i.e. recent calls have a higher index)
+func (mmQuery *mSqlQueryerMockQuery) Calls() []*SqlQueryerMockQueryParams {
+	mmQuery.mutex.RLock()
+
+	argCopy := make([]*SqlQueryerMockQueryParams, len(mmQuery.callArgs))
+	copy(argCopy, mmQuery.callArgs)
+
+	mmQuery.mutex.RUnlock()
+
+	return argCopy
 }
 
 // MinimockQueryDone returns true if the count of the Query invocations corresponds

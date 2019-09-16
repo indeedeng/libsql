@@ -9,7 +9,7 @@ import (
 	"github.com/pkg/errors"
 )
 
-//go:generate go run github.com/gojuno/minimock/cmd/minimock -g -i scanDoer -s _test_mock.go
+//go:generate go run github.com/gojuno/minimock/v3/cmd/minimock -g -i scanDoer -s _test_mock.go
 
 type scanDoer interface {
 	// Do scans row(s) returned by the query using rowScanner

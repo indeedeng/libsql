@@ -12,7 +12,7 @@ func Wrap(db *sql.DB) Database {
 	return newDatabase(newSQLDB(db))
 }
 
-//go:generate go run github.com/gojuno/minimock/cmd/minimock -g -i Database -s _mock.go
+//go:generate go run github.com/gojuno/minimock/v3/cmd/minimock -g -i Database -s _mock.go
 
 // Database provides fluent database API.
 type Database interface {
@@ -26,7 +26,7 @@ type Database interface {
 	Transaction(ctx context.Context, work func(Transaction) error) error
 }
 
-//go:generate go run github.com/gojuno/minimock/cmd/minimock -g -i Transaction -s _mock.go
+//go:generate go run github.com/gojuno/minimock/v3/cmd/minimock -g -i Transaction -s _mock.go
 
 // Transaction represents an open transaction
 type Transaction interface {
@@ -37,7 +37,7 @@ type Transaction interface {
 // ErrNoRows is returned by ScanOne when a query returns no rows
 var ErrNoRows = errors.New("no rows, expected 1")
 
-//go:generate go run github.com/gojuno/minimock/cmd/minimock -g -i Queryer -s _mock.go
+//go:generate go run github.com/gojuno/minimock/v3/cmd/minimock -g -i Queryer -s _mock.go
 
 // Queryer performs scans and updates
 type Queryer interface {
@@ -60,7 +60,7 @@ type Queryer interface {
 	UpdateAndGetLastInsertID(ctx context.Context, sql string, args ...interface{}) (int64, error)
 }
 
-//go:generate go run github.com/gojuno/minimock/cmd/minimock -g -i Preparer -s _mock.go
+//go:generate go run github.com/gojuno/minimock/v3/cmd/minimock -g -i Preparer -s _mock.go
 
 // Preparer prepares a sql statement
 type Preparer interface {
@@ -69,7 +69,7 @@ type Preparer interface {
 	Prepared(ctx context.Context, sql string, work func(Statement) error) error
 }
 
-//go:generate go run github.com/gojuno/minimock/cmd/minimock -g -i Statement -s _mock.go
+//go:generate go run github.com/gojuno/minimock/v3/cmd/minimock -g -i Statement -s _mock.go
 
 // Statement is a prepared statement
 type Statement interface {
@@ -92,7 +92,7 @@ type Statement interface {
 	UpdateAndGetLastInsertID(ctx context.Context, args ...interface{}) (int64, error)
 }
 
-//go:generate go run github.com/gojuno/minimock/cmd/minimock -g -i RowScanner -s _mock.go
+//go:generate go run github.com/gojuno/minimock/v3/cmd/minimock -g -i RowScanner -s _mock.go
 
 // RowScanner scans database rows into arbitrary data structures
 type RowScanner interface {

@@ -5,10 +5,11 @@ package libsql
 import (
 	"context"
 	"database/sql"
+	"sync"
 	mm_atomic "sync/atomic"
 	mm_time "time"
 
-	"github.com/gojuno/minimock"
+	"github.com/gojuno/minimock/v3"
 )
 
 // StatementMock implements Statement
@@ -16,26 +17,31 @@ type StatementMock struct {
 	t minimock.Tester
 
 	funcScan          func(ctx context.Context, scanner RowScanner, args ...interface{}) (err error)
+	inspectFuncScan   func(ctx context.Context, scanner RowScanner, args ...interface{})
 	afterScanCounter  uint64
 	beforeScanCounter uint64
 	ScanMock          mStatementMockScan
 
 	funcScanOne          func(ctx context.Context, scanner RowScanner, args ...interface{}) (err error)
+	inspectFuncScanOne   func(ctx context.Context, scanner RowScanner, args ...interface{})
 	afterScanOneCounter  uint64
 	beforeScanOneCounter uint64
 	ScanOneMock          mStatementMockScanOne
 
 	funcUpdate          func(ctx context.Context, args ...interface{}) (r1 sql.Result, err error)
+	inspectFuncUpdate   func(ctx context.Context, args ...interface{})
 	afterUpdateCounter  uint64
 	beforeUpdateCounter uint64
 	UpdateMock          mStatementMockUpdate
 
 	funcUpdateAndGetLastInsertID          func(ctx context.Context, args ...interface{}) (i1 int64, err error)
+	inspectFuncUpdateAndGetLastInsertID   func(ctx context.Context, args ...interface{})
 	afterUpdateAndGetLastInsertIDCounter  uint64
 	beforeUpdateAndGetLastInsertIDCounter uint64
 	UpdateAndGetLastInsertIDMock          mStatementMockUpdateAndGetLastInsertID
 
 	funcUpdateAndGetRowsAffected          func(ctx context.Context, args ...interface{}) (i1 int64, err error)
+	inspectFuncUpdateAndGetRowsAffected   func(ctx context.Context, args ...interface{})
 	afterUpdateAndGetRowsAffectedCounter  uint64
 	beforeUpdateAndGetRowsAffectedCounter uint64
 	UpdateAndGetRowsAffectedMock          mStatementMockUpdateAndGetRowsAffected
@@ -47,11 +53,21 @@ func NewStatementMock(t minimock.Tester) *StatementMock {
 	if controller, ok := t.(minimock.MockController); ok {
 		controller.RegisterMocker(m)
 	}
+
 	m.ScanMock = mStatementMockScan{mock: m}
+	m.ScanMock.callArgs = []*StatementMockScanParams{}
+
 	m.ScanOneMock = mStatementMockScanOne{mock: m}
+	m.ScanOneMock.callArgs = []*StatementMockScanOneParams{}
+
 	m.UpdateMock = mStatementMockUpdate{mock: m}
+	m.UpdateMock.callArgs = []*StatementMockUpdateParams{}
+
 	m.UpdateAndGetLastInsertIDMock = mStatementMockUpdateAndGetLastInsertID{mock: m}
+	m.UpdateAndGetLastInsertIDMock.callArgs = []*StatementMockUpdateAndGetLastInsertIDParams{}
+
 	m.UpdateAndGetRowsAffectedMock = mStatementMockUpdateAndGetRowsAffected{mock: m}
+	m.UpdateAndGetRowsAffectedMock.callArgs = []*StatementMockUpdateAndGetRowsAffectedParams{}
 
 	return m
 }
@@ -60,6 +76,9 @@ type mStatementMockScan struct {
 	mock               *StatementMock
 	defaultExpectation *StatementMockScanExpectation
 	expectations       []*StatementMockScanExpectation
+
+	callArgs []*StatementMockScanParams
+	mutex    sync.RWMutex
 }
 
 // StatementMockScanExpectation specifies expectation struct of the Statement.Scan
@@ -83,64 +102,75 @@ type StatementMockScanResults struct {
 }
 
 // Expect sets up expected params for Statement.Scan
-func (m *mStatementMockScan) Expect(ctx context.Context, scanner RowScanner, args ...interface{}) *mStatementMockScan {
-	if m.mock.funcScan != nil {
-		m.mock.t.Fatalf("StatementMock.Scan mock is already set by Set")
+func (mmScan *mStatementMockScan) Expect(ctx context.Context, scanner RowScanner, args ...interface{}) *mStatementMockScan {
+	if mmScan.mock.funcScan != nil {
+		mmScan.mock.t.Fatalf("StatementMock.Scan mock is already set by Set")
 	}
 
-	if m.defaultExpectation == nil {
-		m.defaultExpectation = &StatementMockScanExpectation{}
+	if mmScan.defaultExpectation == nil {
+		mmScan.defaultExpectation = &StatementMockScanExpectation{}
 	}
 
-	m.defaultExpectation.params = &StatementMockScanParams{ctx, scanner, args}
-	for _, e := range m.expectations {
-		if minimock.Equal(e.params, m.defaultExpectation.params) {
-			m.mock.t.Fatalf("Expectation set by When has same params: %#v", *m.defaultExpectation.params)
+	mmScan.defaultExpectation.params = &StatementMockScanParams{ctx, scanner, args}
+	for _, e := range mmScan.expectations {
+		if minimock.Equal(e.params, mmScan.defaultExpectation.params) {
+			mmScan.mock.t.Fatalf("Expectation set by When has same params: %#v", *mmScan.defaultExpectation.params)
 		}
 	}
 
-	return m
+	return mmScan
+}
+
+// Inspect accepts an inspector function that has same arguments as the Statement.Scan
+func (mmScan *mStatementMockScan) Inspect(f func(ctx context.Context, scanner RowScanner, args ...interface{})) *mStatementMockScan {
+	if mmScan.mock.inspectFuncScan != nil {
+		mmScan.mock.t.Fatalf("Inspect function is already set for StatementMock.Scan")
+	}
+
+	mmScan.mock.inspectFuncScan = f
+
+	return mmScan
 }
 
 // Return sets up results that will be returned by Statement.Scan
-func (m *mStatementMockScan) Return(err error) *StatementMock {
-	if m.mock.funcScan != nil {
-		m.mock.t.Fatalf("StatementMock.Scan mock is already set by Set")
+func (mmScan *mStatementMockScan) Return(err error) *StatementMock {
+	if mmScan.mock.funcScan != nil {
+		mmScan.mock.t.Fatalf("StatementMock.Scan mock is already set by Set")
 	}
 
-	if m.defaultExpectation == nil {
-		m.defaultExpectation = &StatementMockScanExpectation{mock: m.mock}
+	if mmScan.defaultExpectation == nil {
+		mmScan.defaultExpectation = &StatementMockScanExpectation{mock: mmScan.mock}
 	}
-	m.defaultExpectation.results = &StatementMockScanResults{err}
-	return m.mock
+	mmScan.defaultExpectation.results = &StatementMockScanResults{err}
+	return mmScan.mock
 }
 
 //Set uses given function f to mock the Statement.Scan method
-func (m *mStatementMockScan) Set(f func(ctx context.Context, scanner RowScanner, args ...interface{}) (err error)) *StatementMock {
-	if m.defaultExpectation != nil {
-		m.mock.t.Fatalf("Default expectation is already set for the Statement.Scan method")
+func (mmScan *mStatementMockScan) Set(f func(ctx context.Context, scanner RowScanner, args ...interface{}) (err error)) *StatementMock {
+	if mmScan.defaultExpectation != nil {
+		mmScan.mock.t.Fatalf("Default expectation is already set for the Statement.Scan method")
 	}
 
-	if len(m.expectations) > 0 {
-		m.mock.t.Fatalf("Some expectations are already set for the Statement.Scan method")
+	if len(mmScan.expectations) > 0 {
+		mmScan.mock.t.Fatalf("Some expectations are already set for the Statement.Scan method")
 	}
 
-	m.mock.funcScan = f
-	return m.mock
+	mmScan.mock.funcScan = f
+	return mmScan.mock
 }
 
 // When sets expectation for the Statement.Scan which will trigger the result defined by the following
 // Then helper
-func (m *mStatementMockScan) When(ctx context.Context, scanner RowScanner, args ...interface{}) *StatementMockScanExpectation {
-	if m.mock.funcScan != nil {
-		m.mock.t.Fatalf("StatementMock.Scan mock is already set by Set")
+func (mmScan *mStatementMockScan) When(ctx context.Context, scanner RowScanner, args ...interface{}) *StatementMockScanExpectation {
+	if mmScan.mock.funcScan != nil {
+		mmScan.mock.t.Fatalf("StatementMock.Scan mock is already set by Set")
 	}
 
 	expectation := &StatementMockScanExpectation{
-		mock:   m.mock,
+		mock:   mmScan.mock,
 		params: &StatementMockScanParams{ctx, scanner, args},
 	}
-	m.expectations = append(m.expectations, expectation)
+	mmScan.expectations = append(mmScan.expectations, expectation)
 	return expectation
 }
 
@@ -151,46 +181,70 @@ func (e *StatementMockScanExpectation) Then(err error) *StatementMock {
 }
 
 // Scan implements Statement
-func (m *StatementMock) Scan(ctx context.Context, scanner RowScanner, args ...interface{}) (err error) {
-	mm_atomic.AddUint64(&m.beforeScanCounter, 1)
-	defer mm_atomic.AddUint64(&m.afterScanCounter, 1)
+func (mmScan *StatementMock) Scan(ctx context.Context, scanner RowScanner, args ...interface{}) (err error) {
+	mm_atomic.AddUint64(&mmScan.beforeScanCounter, 1)
+	defer mm_atomic.AddUint64(&mmScan.afterScanCounter, 1)
 
-	for _, e := range m.ScanMock.expectations {
-		if minimock.Equal(*e.params, StatementMockScanParams{ctx, scanner, args}) {
+	if mmScan.inspectFuncScan != nil {
+		mmScan.inspectFuncScan(ctx, scanner, args...)
+	}
+
+	mm_params := &StatementMockScanParams{ctx, scanner, args}
+
+	// Record call args
+	mmScan.ScanMock.mutex.Lock()
+	mmScan.ScanMock.callArgs = append(mmScan.ScanMock.callArgs, mm_params)
+	mmScan.ScanMock.mutex.Unlock()
+
+	for _, e := range mmScan.ScanMock.expectations {
+		if minimock.Equal(e.params, mm_params) {
 			mm_atomic.AddUint64(&e.Counter, 1)
 			return e.results.err
 		}
 	}
 
-	if m.ScanMock.defaultExpectation != nil {
-		mm_atomic.AddUint64(&m.ScanMock.defaultExpectation.Counter, 1)
-		want := m.ScanMock.defaultExpectation.params
-		got := StatementMockScanParams{ctx, scanner, args}
-		if want != nil && !minimock.Equal(*want, got) {
-			m.t.Errorf("StatementMock.Scan got unexpected parameters, want: %#v, got: %#v%s\n", *want, got, minimock.Diff(*want, got))
+	if mmScan.ScanMock.defaultExpectation != nil {
+		mm_atomic.AddUint64(&mmScan.ScanMock.defaultExpectation.Counter, 1)
+		mm_want := mmScan.ScanMock.defaultExpectation.params
+		mm_got := StatementMockScanParams{ctx, scanner, args}
+		if mm_want != nil && !minimock.Equal(*mm_want, mm_got) {
+			mmScan.t.Errorf("StatementMock.Scan got unexpected parameters, want: %#v, got: %#v%s\n", *mm_want, mm_got, minimock.Diff(*mm_want, mm_got))
 		}
 
-		results := m.ScanMock.defaultExpectation.results
-		if results == nil {
-			m.t.Fatal("No results are set for the StatementMock.Scan")
+		mm_results := mmScan.ScanMock.defaultExpectation.results
+		if mm_results == nil {
+			mmScan.t.Fatal("No results are set for the StatementMock.Scan")
 		}
-		return (*results).err
+		return (*mm_results).err
 	}
-	if m.funcScan != nil {
-		return m.funcScan(ctx, scanner, args...)
+	if mmScan.funcScan != nil {
+		return mmScan.funcScan(ctx, scanner, args...)
 	}
-	m.t.Fatalf("Unexpected call to StatementMock.Scan. %v %v %v", ctx, scanner, args)
+	mmScan.t.Fatalf("Unexpected call to StatementMock.Scan. %v %v %v", ctx, scanner, args)
 	return
 }
 
 // ScanAfterCounter returns a count of finished StatementMock.Scan invocations
-func (m *StatementMock) ScanAfterCounter() uint64 {
-	return mm_atomic.LoadUint64(&m.afterScanCounter)
+func (mmScan *StatementMock) ScanAfterCounter() uint64 {
+	return mm_atomic.LoadUint64(&mmScan.afterScanCounter)
 }
 
 // ScanBeforeCounter returns a count of StatementMock.Scan invocations
-func (m *StatementMock) ScanBeforeCounter() uint64 {
-	return mm_atomic.LoadUint64(&m.beforeScanCounter)
+func (mmScan *StatementMock) ScanBeforeCounter() uint64 {
+	return mm_atomic.LoadUint64(&mmScan.beforeScanCounter)
+}
+
+// Calls returns a list of arguments used in each call to StatementMock.Scan.
+// The list is in the same order as the calls were made (i.e. recent calls have a higher index)
+func (mmScan *mStatementMockScan) Calls() []*StatementMockScanParams {
+	mmScan.mutex.RLock()
+
+	argCopy := make([]*StatementMockScanParams, len(mmScan.callArgs))
+	copy(argCopy, mmScan.callArgs)
+
+	mmScan.mutex.RUnlock()
+
+	return argCopy
 }
 
 // MinimockScanDone returns true if the count of the Scan invocations corresponds
@@ -239,6 +293,9 @@ type mStatementMockScanOne struct {
 	mock               *StatementMock
 	defaultExpectation *StatementMockScanOneExpectation
 	expectations       []*StatementMockScanOneExpectation
+
+	callArgs []*StatementMockScanOneParams
+	mutex    sync.RWMutex
 }
 
 // StatementMockScanOneExpectation specifies expectation struct of the Statement.ScanOne
@@ -262,64 +319,75 @@ type StatementMockScanOneResults struct {
 }
 
 // Expect sets up expected params for Statement.ScanOne
-func (m *mStatementMockScanOne) Expect(ctx context.Context, scanner RowScanner, args ...interface{}) *mStatementMockScanOne {
-	if m.mock.funcScanOne != nil {
-		m.mock.t.Fatalf("StatementMock.ScanOne mock is already set by Set")
+func (mmScanOne *mStatementMockScanOne) Expect(ctx context.Context, scanner RowScanner, args ...interface{}) *mStatementMockScanOne {
+	if mmScanOne.mock.funcScanOne != nil {
+		mmScanOne.mock.t.Fatalf("StatementMock.ScanOne mock is already set by Set")
 	}
 
-	if m.defaultExpectation == nil {
-		m.defaultExpectation = &StatementMockScanOneExpectation{}
+	if mmScanOne.defaultExpectation == nil {
+		mmScanOne.defaultExpectation = &StatementMockScanOneExpectation{}
 	}
 
-	m.defaultExpectation.params = &StatementMockScanOneParams{ctx, scanner, args}
-	for _, e := range m.expectations {
-		if minimock.Equal(e.params, m.defaultExpectation.params) {
-			m.mock.t.Fatalf("Expectation set by When has same params: %#v", *m.defaultExpectation.params)
+	mmScanOne.defaultExpectation.params = &StatementMockScanOneParams{ctx, scanner, args}
+	for _, e := range mmScanOne.expectations {
+		if minimock.Equal(e.params, mmScanOne.defaultExpectation.params) {
+			mmScanOne.mock.t.Fatalf("Expectation set by When has same params: %#v", *mmScanOne.defaultExpectation.params)
 		}
 	}
 
-	return m
+	return mmScanOne
+}
+
+// Inspect accepts an inspector function that has same arguments as the Statement.ScanOne
+func (mmScanOne *mStatementMockScanOne) Inspect(f func(ctx context.Context, scanner RowScanner, args ...interface{})) *mStatementMockScanOne {
+	if mmScanOne.mock.inspectFuncScanOne != nil {
+		mmScanOne.mock.t.Fatalf("Inspect function is already set for StatementMock.ScanOne")
+	}
+
+	mmScanOne.mock.inspectFuncScanOne = f
+
+	return mmScanOne
 }
 
 // Return sets up results that will be returned by Statement.ScanOne
-func (m *mStatementMockScanOne) Return(err error) *StatementMock {
-	if m.mock.funcScanOne != nil {
-		m.mock.t.Fatalf("StatementMock.ScanOne mock is already set by Set")
+func (mmScanOne *mStatementMockScanOne) Return(err error) *StatementMock {
+	if mmScanOne.mock.funcScanOne != nil {
+		mmScanOne.mock.t.Fatalf("StatementMock.ScanOne mock is already set by Set")
 	}
 
-	if m.defaultExpectation == nil {
-		m.defaultExpectation = &StatementMockScanOneExpectation{mock: m.mock}
+	if mmScanOne.defaultExpectation == nil {
+		mmScanOne.defaultExpectation = &StatementMockScanOneExpectation{mock: mmScanOne.mock}
 	}
-	m.defaultExpectation.results = &StatementMockScanOneResults{err}
-	return m.mock
+	mmScanOne.defaultExpectation.results = &StatementMockScanOneResults{err}
+	return mmScanOne.mock
 }
 
 //Set uses given function f to mock the Statement.ScanOne method
-func (m *mStatementMockScanOne) Set(f func(ctx context.Context, scanner RowScanner, args ...interface{}) (err error)) *StatementMock {
-	if m.defaultExpectation != nil {
-		m.mock.t.Fatalf("Default expectation is already set for the Statement.ScanOne method")
+func (mmScanOne *mStatementMockScanOne) Set(f func(ctx context.Context, scanner RowScanner, args ...interface{}) (err error)) *StatementMock {
+	if mmScanOne.defaultExpectation != nil {
+		mmScanOne.mock.t.Fatalf("Default expectation is already set for the Statement.ScanOne method")
 	}
 
-	if len(m.expectations) > 0 {
-		m.mock.t.Fatalf("Some expectations are already set for the Statement.ScanOne method")
+	if len(mmScanOne.expectations) > 0 {
+		mmScanOne.mock.t.Fatalf("Some expectations are already set for the Statement.ScanOne method")
 	}
 
-	m.mock.funcScanOne = f
-	return m.mock
+	mmScanOne.mock.funcScanOne = f
+	return mmScanOne.mock
 }
 
 // When sets expectation for the Statement.ScanOne which will trigger the result defined by the following
 // Then helper
-func (m *mStatementMockScanOne) When(ctx context.Context, scanner RowScanner, args ...interface{}) *StatementMockScanOneExpectation {
-	if m.mock.funcScanOne != nil {
-		m.mock.t.Fatalf("StatementMock.ScanOne mock is already set by Set")
+func (mmScanOne *mStatementMockScanOne) When(ctx context.Context, scanner RowScanner, args ...interface{}) *StatementMockScanOneExpectation {
+	if mmScanOne.mock.funcScanOne != nil {
+		mmScanOne.mock.t.Fatalf("StatementMock.ScanOne mock is already set by Set")
 	}
 
 	expectation := &StatementMockScanOneExpectation{
-		mock:   m.mock,
+		mock:   mmScanOne.mock,
 		params: &StatementMockScanOneParams{ctx, scanner, args},
 	}
-	m.expectations = append(m.expectations, expectation)
+	mmScanOne.expectations = append(mmScanOne.expectations, expectation)
 	return expectation
 }
 
@@ -330,46 +398,70 @@ func (e *StatementMockScanOneExpectation) Then(err error) *StatementMock {
 }
 
 // ScanOne implements Statement
-func (m *StatementMock) ScanOne(ctx context.Context, scanner RowScanner, args ...interface{}) (err error) {
-	mm_atomic.AddUint64(&m.beforeScanOneCounter, 1)
-	defer mm_atomic.AddUint64(&m.afterScanOneCounter, 1)
+func (mmScanOne *StatementMock) ScanOne(ctx context.Context, scanner RowScanner, args ...interface{}) (err error) {
+	mm_atomic.AddUint64(&mmScanOne.beforeScanOneCounter, 1)
+	defer mm_atomic.AddUint64(&mmScanOne.afterScanOneCounter, 1)
 
-	for _, e := range m.ScanOneMock.expectations {
-		if minimock.Equal(*e.params, StatementMockScanOneParams{ctx, scanner, args}) {
+	if mmScanOne.inspectFuncScanOne != nil {
+		mmScanOne.inspectFuncScanOne(ctx, scanner, args...)
+	}
+
+	mm_params := &StatementMockScanOneParams{ctx, scanner, args}
+
+	// Record call args
+	mmScanOne.ScanOneMock.mutex.Lock()
+	mmScanOne.ScanOneMock.callArgs = append(mmScanOne.ScanOneMock.callArgs, mm_params)
+	mmScanOne.ScanOneMock.mutex.Unlock()
+
+	for _, e := range mmScanOne.ScanOneMock.expectations {
+		if minimock.Equal(e.params, mm_params) {
 			mm_atomic.AddUint64(&e.Counter, 1)
 			return e.results.err
 		}
 	}
 
-	if m.ScanOneMock.defaultExpectation != nil {
-		mm_atomic.AddUint64(&m.ScanOneMock.defaultExpectation.Counter, 1)
-		want := m.ScanOneMock.defaultExpectation.params
-		got := StatementMockScanOneParams{ctx, scanner, args}
-		if want != nil && !minimock.Equal(*want, got) {
-			m.t.Errorf("StatementMock.ScanOne got unexpected parameters, want: %#v, got: %#v%s\n", *want, got, minimock.Diff(*want, got))
+	if mmScanOne.ScanOneMock.defaultExpectation != nil {
+		mm_atomic.AddUint64(&mmScanOne.ScanOneMock.defaultExpectation.Counter, 1)
+		mm_want := mmScanOne.ScanOneMock.defaultExpectation.params
+		mm_got := StatementMockScanOneParams{ctx, scanner, args}
+		if mm_want != nil && !minimock.Equal(*mm_want, mm_got) {
+			mmScanOne.t.Errorf("StatementMock.ScanOne got unexpected parameters, want: %#v, got: %#v%s\n", *mm_want, mm_got, minimock.Diff(*mm_want, mm_got))
 		}
 
-		results := m.ScanOneMock.defaultExpectation.results
-		if results == nil {
-			m.t.Fatal("No results are set for the StatementMock.ScanOne")
+		mm_results := mmScanOne.ScanOneMock.defaultExpectation.results
+		if mm_results == nil {
+			mmScanOne.t.Fatal("No results are set for the StatementMock.ScanOne")
 		}
-		return (*results).err
+		return (*mm_results).err
 	}
-	if m.funcScanOne != nil {
-		return m.funcScanOne(ctx, scanner, args...)
+	if mmScanOne.funcScanOne != nil {
+		return mmScanOne.funcScanOne(ctx, scanner, args...)
 	}
-	m.t.Fatalf("Unexpected call to StatementMock.ScanOne. %v %v %v", ctx, scanner, args)
+	mmScanOne.t.Fatalf("Unexpected call to StatementMock.ScanOne. %v %v %v", ctx, scanner, args)
 	return
 }
 
 // ScanOneAfterCounter returns a count of finished StatementMock.ScanOne invocations
-func (m *StatementMock) ScanOneAfterCounter() uint64 {
-	return mm_atomic.LoadUint64(&m.afterScanOneCounter)
+func (mmScanOne *StatementMock) ScanOneAfterCounter() uint64 {
+	return mm_atomic.LoadUint64(&mmScanOne.afterScanOneCounter)
 }
 
 // ScanOneBeforeCounter returns a count of StatementMock.ScanOne invocations
-func (m *StatementMock) ScanOneBeforeCounter() uint64 {
-	return mm_atomic.LoadUint64(&m.beforeScanOneCounter)
+func (mmScanOne *StatementMock) ScanOneBeforeCounter() uint64 {
+	return mm_atomic.LoadUint64(&mmScanOne.beforeScanOneCounter)
+}
+
+// Calls returns a list of arguments used in each call to StatementMock.ScanOne.
+// The list is in the same order as the calls were made (i.e. recent calls have a higher index)
+func (mmScanOne *mStatementMockScanOne) Calls() []*StatementMockScanOneParams {
+	mmScanOne.mutex.RLock()
+
+	argCopy := make([]*StatementMockScanOneParams, len(mmScanOne.callArgs))
+	copy(argCopy, mmScanOne.callArgs)
+
+	mmScanOne.mutex.RUnlock()
+
+	return argCopy
 }
 
 // MinimockScanOneDone returns true if the count of the ScanOne invocations corresponds
@@ -418,6 +510,9 @@ type mStatementMockUpdate struct {
 	mock               *StatementMock
 	defaultExpectation *StatementMockUpdateExpectation
 	expectations       []*StatementMockUpdateExpectation
+
+	callArgs []*StatementMockUpdateParams
+	mutex    sync.RWMutex
 }
 
 // StatementMockUpdateExpectation specifies expectation struct of the Statement.Update
@@ -441,64 +536,75 @@ type StatementMockUpdateResults struct {
 }
 
 // Expect sets up expected params for Statement.Update
-func (m *mStatementMockUpdate) Expect(ctx context.Context, args ...interface{}) *mStatementMockUpdate {
-	if m.mock.funcUpdate != nil {
-		m.mock.t.Fatalf("StatementMock.Update mock is already set by Set")
+func (mmUpdate *mStatementMockUpdate) Expect(ctx context.Context, args ...interface{}) *mStatementMockUpdate {
+	if mmUpdate.mock.funcUpdate != nil {
+		mmUpdate.mock.t.Fatalf("StatementMock.Update mock is already set by Set")
 	}
 
-	if m.defaultExpectation == nil {
-		m.defaultExpectation = &StatementMockUpdateExpectation{}
+	if mmUpdate.defaultExpectation == nil {
+		mmUpdate.defaultExpectation = &StatementMockUpdateExpectation{}
 	}
 
-	m.defaultExpectation.params = &StatementMockUpdateParams{ctx, args}
-	for _, e := range m.expectations {
-		if minimock.Equal(e.params, m.defaultExpectation.params) {
-			m.mock.t.Fatalf("Expectation set by When has same params: %#v", *m.defaultExpectation.params)
+	mmUpdate.defaultExpectation.params = &StatementMockUpdateParams{ctx, args}
+	for _, e := range mmUpdate.expectations {
+		if minimock.Equal(e.params, mmUpdate.defaultExpectation.params) {
+			mmUpdate.mock.t.Fatalf("Expectation set by When has same params: %#v", *mmUpdate.defaultExpectation.params)
 		}
 	}
 
-	return m
+	return mmUpdate
+}
+
+// Inspect accepts an inspector function that has same arguments as the Statement.Update
+func (mmUpdate *mStatementMockUpdate) Inspect(f func(ctx context.Context, args ...interface{})) *mStatementMockUpdate {
+	if mmUpdate.mock.inspectFuncUpdate != nil {
+		mmUpdate.mock.t.Fatalf("Inspect function is already set for StatementMock.Update")
+	}
+
+	mmUpdate.mock.inspectFuncUpdate = f
+
+	return mmUpdate
 }
 
 // Return sets up results that will be returned by Statement.Update
-func (m *mStatementMockUpdate) Return(r1 sql.Result, err error) *StatementMock {
-	if m.mock.funcUpdate != nil {
-		m.mock.t.Fatalf("StatementMock.Update mock is already set by Set")
+func (mmUpdate *mStatementMockUpdate) Return(r1 sql.Result, err error) *StatementMock {
+	if mmUpdate.mock.funcUpdate != nil {
+		mmUpdate.mock.t.Fatalf("StatementMock.Update mock is already set by Set")
 	}
 
-	if m.defaultExpectation == nil {
-		m.defaultExpectation = &StatementMockUpdateExpectation{mock: m.mock}
+	if mmUpdate.defaultExpectation == nil {
+		mmUpdate.defaultExpectation = &StatementMockUpdateExpectation{mock: mmUpdate.mock}
 	}
-	m.defaultExpectation.results = &StatementMockUpdateResults{r1, err}
-	return m.mock
+	mmUpdate.defaultExpectation.results = &StatementMockUpdateResults{r1, err}
+	return mmUpdate.mock
 }
 
 //Set uses given function f to mock the Statement.Update method
-func (m *mStatementMockUpdate) Set(f func(ctx context.Context, args ...interface{}) (r1 sql.Result, err error)) *StatementMock {
-	if m.defaultExpectation != nil {
-		m.mock.t.Fatalf("Default expectation is already set for the Statement.Update method")
+func (mmUpdate *mStatementMockUpdate) Set(f func(ctx context.Context, args ...interface{}) (r1 sql.Result, err error)) *StatementMock {
+	if mmUpdate.defaultExpectation != nil {
+		mmUpdate.mock.t.Fatalf("Default expectation is already set for the Statement.Update method")
 	}
 
-	if len(m.expectations) > 0 {
-		m.mock.t.Fatalf("Some expectations are already set for the Statement.Update method")
+	if len(mmUpdate.expectations) > 0 {
+		mmUpdate.mock.t.Fatalf("Some expectations are already set for the Statement.Update method")
 	}
 
-	m.mock.funcUpdate = f
-	return m.mock
+	mmUpdate.mock.funcUpdate = f
+	return mmUpdate.mock
 }
 
 // When sets expectation for the Statement.Update which will trigger the result defined by the following
 // Then helper
-func (m *mStatementMockUpdate) When(ctx context.Context, args ...interface{}) *StatementMockUpdateExpectation {
-	if m.mock.funcUpdate != nil {
-		m.mock.t.Fatalf("StatementMock.Update mock is already set by Set")
+func (mmUpdate *mStatementMockUpdate) When(ctx context.Context, args ...interface{}) *StatementMockUpdateExpectation {
+	if mmUpdate.mock.funcUpdate != nil {
+		mmUpdate.mock.t.Fatalf("StatementMock.Update mock is already set by Set")
 	}
 
 	expectation := &StatementMockUpdateExpectation{
-		mock:   m.mock,
+		mock:   mmUpdate.mock,
 		params: &StatementMockUpdateParams{ctx, args},
 	}
-	m.expectations = append(m.expectations, expectation)
+	mmUpdate.expectations = append(mmUpdate.expectations, expectation)
 	return expectation
 }
 
@@ -509,46 +615,70 @@ func (e *StatementMockUpdateExpectation) Then(r1 sql.Result, err error) *Stateme
 }
 
 // Update implements Statement
-func (m *StatementMock) Update(ctx context.Context, args ...interface{}) (r1 sql.Result, err error) {
-	mm_atomic.AddUint64(&m.beforeUpdateCounter, 1)
-	defer mm_atomic.AddUint64(&m.afterUpdateCounter, 1)
+func (mmUpdate *StatementMock) Update(ctx context.Context, args ...interface{}) (r1 sql.Result, err error) {
+	mm_atomic.AddUint64(&mmUpdate.beforeUpdateCounter, 1)
+	defer mm_atomic.AddUint64(&mmUpdate.afterUpdateCounter, 1)
 
-	for _, e := range m.UpdateMock.expectations {
-		if minimock.Equal(*e.params, StatementMockUpdateParams{ctx, args}) {
+	if mmUpdate.inspectFuncUpdate != nil {
+		mmUpdate.inspectFuncUpdate(ctx, args...)
+	}
+
+	mm_params := &StatementMockUpdateParams{ctx, args}
+
+	// Record call args
+	mmUpdate.UpdateMock.mutex.Lock()
+	mmUpdate.UpdateMock.callArgs = append(mmUpdate.UpdateMock.callArgs, mm_params)
+	mmUpdate.UpdateMock.mutex.Unlock()
+
+	for _, e := range mmUpdate.UpdateMock.expectations {
+		if minimock.Equal(e.params, mm_params) {
 			mm_atomic.AddUint64(&e.Counter, 1)
 			return e.results.r1, e.results.err
 		}
 	}
 
-	if m.UpdateMock.defaultExpectation != nil {
-		mm_atomic.AddUint64(&m.UpdateMock.defaultExpectation.Counter, 1)
-		want := m.UpdateMock.defaultExpectation.params
-		got := StatementMockUpdateParams{ctx, args}
-		if want != nil && !minimock.Equal(*want, got) {
-			m.t.Errorf("StatementMock.Update got unexpected parameters, want: %#v, got: %#v%s\n", *want, got, minimock.Diff(*want, got))
+	if mmUpdate.UpdateMock.defaultExpectation != nil {
+		mm_atomic.AddUint64(&mmUpdate.UpdateMock.defaultExpectation.Counter, 1)
+		mm_want := mmUpdate.UpdateMock.defaultExpectation.params
+		mm_got := StatementMockUpdateParams{ctx, args}
+		if mm_want != nil && !minimock.Equal(*mm_want, mm_got) {
+			mmUpdate.t.Errorf("StatementMock.Update got unexpected parameters, want: %#v, got: %#v%s\n", *mm_want, mm_got, minimock.Diff(*mm_want, mm_got))
 		}
 
-		results := m.UpdateMock.defaultExpectation.results
-		if results == nil {
-			m.t.Fatal("No results are set for the StatementMock.Update")
+		mm_results := mmUpdate.UpdateMock.defaultExpectation.results
+		if mm_results == nil {
+			mmUpdate.t.Fatal("No results are set for the StatementMock.Update")
 		}
-		return (*results).r1, (*results).err
+		return (*mm_results).r1, (*mm_results).err
 	}
-	if m.funcUpdate != nil {
-		return m.funcUpdate(ctx, args...)
+	if mmUpdate.funcUpdate != nil {
+		return mmUpdate.funcUpdate(ctx, args...)
 	}
-	m.t.Fatalf("Unexpected call to StatementMock.Update. %v %v", ctx, args)
+	mmUpdate.t.Fatalf("Unexpected call to StatementMock.Update. %v %v", ctx, args)
 	return
 }
 
 // UpdateAfterCounter returns a count of finished StatementMock.Update invocations
-func (m *StatementMock) UpdateAfterCounter() uint64 {
-	return mm_atomic.LoadUint64(&m.afterUpdateCounter)
+func (mmUpdate *StatementMock) UpdateAfterCounter() uint64 {
+	return mm_atomic.LoadUint64(&mmUpdate.afterUpdateCounter)
 }
 
 // UpdateBeforeCounter returns a count of StatementMock.Update invocations
-func (m *StatementMock) UpdateBeforeCounter() uint64 {
-	return mm_atomic.LoadUint64(&m.beforeUpdateCounter)
+func (mmUpdate *StatementMock) UpdateBeforeCounter() uint64 {
+	return mm_atomic.LoadUint64(&mmUpdate.beforeUpdateCounter)
+}
+
+// Calls returns a list of arguments used in each call to StatementMock.Update.
+// The list is in the same order as the calls were made (i.e. recent calls have a higher index)
+func (mmUpdate *mStatementMockUpdate) Calls() []*StatementMockUpdateParams {
+	mmUpdate.mutex.RLock()
+
+	argCopy := make([]*StatementMockUpdateParams, len(mmUpdate.callArgs))
+	copy(argCopy, mmUpdate.callArgs)
+
+	mmUpdate.mutex.RUnlock()
+
+	return argCopy
 }
 
 // MinimockUpdateDone returns true if the count of the Update invocations corresponds
@@ -597,6 +727,9 @@ type mStatementMockUpdateAndGetLastInsertID struct {
 	mock               *StatementMock
 	defaultExpectation *StatementMockUpdateAndGetLastInsertIDExpectation
 	expectations       []*StatementMockUpdateAndGetLastInsertIDExpectation
+
+	callArgs []*StatementMockUpdateAndGetLastInsertIDParams
+	mutex    sync.RWMutex
 }
 
 // StatementMockUpdateAndGetLastInsertIDExpectation specifies expectation struct of the Statement.UpdateAndGetLastInsertID
@@ -620,64 +753,75 @@ type StatementMockUpdateAndGetLastInsertIDResults struct {
 }
 
 // Expect sets up expected params for Statement.UpdateAndGetLastInsertID
-func (m *mStatementMockUpdateAndGetLastInsertID) Expect(ctx context.Context, args ...interface{}) *mStatementMockUpdateAndGetLastInsertID {
-	if m.mock.funcUpdateAndGetLastInsertID != nil {
-		m.mock.t.Fatalf("StatementMock.UpdateAndGetLastInsertID mock is already set by Set")
+func (mmUpdateAndGetLastInsertID *mStatementMockUpdateAndGetLastInsertID) Expect(ctx context.Context, args ...interface{}) *mStatementMockUpdateAndGetLastInsertID {
+	if mmUpdateAndGetLastInsertID.mock.funcUpdateAndGetLastInsertID != nil {
+		mmUpdateAndGetLastInsertID.mock.t.Fatalf("StatementMock.UpdateAndGetLastInsertID mock is already set by Set")
 	}
 
-	if m.defaultExpectation == nil {
-		m.defaultExpectation = &StatementMockUpdateAndGetLastInsertIDExpectation{}
+	if mmUpdateAndGetLastInsertID.defaultExpectation == nil {
+		mmUpdateAndGetLastInsertID.defaultExpectation = &StatementMockUpdateAndGetLastInsertIDExpectation{}
 	}
 
-	m.defaultExpectation.params = &StatementMockUpdateAndGetLastInsertIDParams{ctx, args}
-	for _, e := range m.expectations {
-		if minimock.Equal(e.params, m.defaultExpectation.params) {
-			m.mock.t.Fatalf("Expectation set by When has same params: %#v", *m.defaultExpectation.params)
+	mmUpdateAndGetLastInsertID.defaultExpectation.params = &StatementMockUpdateAndGetLastInsertIDParams{ctx, args}
+	for _, e := range mmUpdateAndGetLastInsertID.expectations {
+		if minimock.Equal(e.params, mmUpdateAndGetLastInsertID.defaultExpectation.params) {
+			mmUpdateAndGetLastInsertID.mock.t.Fatalf("Expectation set by When has same params: %#v", *mmUpdateAndGetLastInsertID.defaultExpectation.params)
 		}
 	}
 
-	return m
+	return mmUpdateAndGetLastInsertID
+}
+
+// Inspect accepts an inspector function that has same arguments as the Statement.UpdateAndGetLastInsertID
+func (mmUpdateAndGetLastInsertID *mStatementMockUpdateAndGetLastInsertID) Inspect(f func(ctx context.Context, args ...interface{})) *mStatementMockUpdateAndGetLastInsertID {
+	if mmUpdateAndGetLastInsertID.mock.inspectFuncUpdateAndGetLastInsertID != nil {
+		mmUpdateAndGetLastInsertID.mock.t.Fatalf("Inspect function is already set for StatementMock.UpdateAndGetLastInsertID")
+	}
+
+	mmUpdateAndGetLastInsertID.mock.inspectFuncUpdateAndGetLastInsertID = f
+
+	return mmUpdateAndGetLastInsertID
 }
 
 // Return sets up results that will be returned by Statement.UpdateAndGetLastInsertID
-func (m *mStatementMockUpdateAndGetLastInsertID) Return(i1 int64, err error) *StatementMock {
-	if m.mock.funcUpdateAndGetLastInsertID != nil {
-		m.mock.t.Fatalf("StatementMock.UpdateAndGetLastInsertID mock is already set by Set")
+func (mmUpdateAndGetLastInsertID *mStatementMockUpdateAndGetLastInsertID) Return(i1 int64, err error) *StatementMock {
+	if mmUpdateAndGetLastInsertID.mock.funcUpdateAndGetLastInsertID != nil {
+		mmUpdateAndGetLastInsertID.mock.t.Fatalf("StatementMock.UpdateAndGetLastInsertID mock is already set by Set")
 	}
 
-	if m.defaultExpectation == nil {
-		m.defaultExpectation = &StatementMockUpdateAndGetLastInsertIDExpectation{mock: m.mock}
+	if mmUpdateAndGetLastInsertID.defaultExpectation == nil {
+		mmUpdateAndGetLastInsertID.defaultExpectation = &StatementMockUpdateAndGetLastInsertIDExpectation{mock: mmUpdateAndGetLastInsertID.mock}
 	}
-	m.defaultExpectation.results = &StatementMockUpdateAndGetLastInsertIDResults{i1, err}
-	return m.mock
+	mmUpdateAndGetLastInsertID.defaultExpectation.results = &StatementMockUpdateAndGetLastInsertIDResults{i1, err}
+	return mmUpdateAndGetLastInsertID.mock
 }
 
 //Set uses given function f to mock the Statement.UpdateAndGetLastInsertID method
-func (m *mStatementMockUpdateAndGetLastInsertID) Set(f func(ctx context.Context, args ...interface{}) (i1 int64, err error)) *StatementMock {
-	if m.defaultExpectation != nil {
-		m.mock.t.Fatalf("Default expectation is already set for the Statement.UpdateAndGetLastInsertID method")
+func (mmUpdateAndGetLastInsertID *mStatementMockUpdateAndGetLastInsertID) Set(f func(ctx context.Context, args ...interface{}) (i1 int64, err error)) *StatementMock {
+	if mmUpdateAndGetLastInsertID.defaultExpectation != nil {
+		mmUpdateAndGetLastInsertID.mock.t.Fatalf("Default expectation is already set for the Statement.UpdateAndGetLastInsertID method")
 	}
 
-	if len(m.expectations) > 0 {
-		m.mock.t.Fatalf("Some expectations are already set for the Statement.UpdateAndGetLastInsertID method")
+	if len(mmUpdateAndGetLastInsertID.expectations) > 0 {
+		mmUpdateAndGetLastInsertID.mock.t.Fatalf("Some expectations are already set for the Statement.UpdateAndGetLastInsertID method")
 	}
 
-	m.mock.funcUpdateAndGetLastInsertID = f
-	return m.mock
+	mmUpdateAndGetLastInsertID.mock.funcUpdateAndGetLastInsertID = f
+	return mmUpdateAndGetLastInsertID.mock
 }
 
 // When sets expectation for the Statement.UpdateAndGetLastInsertID which will trigger the result defined by the following
 // Then helper
-func (m *mStatementMockUpdateAndGetLastInsertID) When(ctx context.Context, args ...interface{}) *StatementMockUpdateAndGetLastInsertIDExpectation {
-	if m.mock.funcUpdateAndGetLastInsertID != nil {
-		m.mock.t.Fatalf("StatementMock.UpdateAndGetLastInsertID mock is already set by Set")
+func (mmUpdateAndGetLastInsertID *mStatementMockUpdateAndGetLastInsertID) When(ctx context.Context, args ...interface{}) *StatementMockUpdateAndGetLastInsertIDExpectation {
+	if mmUpdateAndGetLastInsertID.mock.funcUpdateAndGetLastInsertID != nil {
+		mmUpdateAndGetLastInsertID.mock.t.Fatalf("StatementMock.UpdateAndGetLastInsertID mock is already set by Set")
 	}
 
 	expectation := &StatementMockUpdateAndGetLastInsertIDExpectation{
-		mock:   m.mock,
+		mock:   mmUpdateAndGetLastInsertID.mock,
 		params: &StatementMockUpdateAndGetLastInsertIDParams{ctx, args},
 	}
-	m.expectations = append(m.expectations, expectation)
+	mmUpdateAndGetLastInsertID.expectations = append(mmUpdateAndGetLastInsertID.expectations, expectation)
 	return expectation
 }
 
@@ -688,46 +832,70 @@ func (e *StatementMockUpdateAndGetLastInsertIDExpectation) Then(i1 int64, err er
 }
 
 // UpdateAndGetLastInsertID implements Statement
-func (m *StatementMock) UpdateAndGetLastInsertID(ctx context.Context, args ...interface{}) (i1 int64, err error) {
-	mm_atomic.AddUint64(&m.beforeUpdateAndGetLastInsertIDCounter, 1)
-	defer mm_atomic.AddUint64(&m.afterUpdateAndGetLastInsertIDCounter, 1)
+func (mmUpdateAndGetLastInsertID *StatementMock) UpdateAndGetLastInsertID(ctx context.Context, args ...interface{}) (i1 int64, err error) {
+	mm_atomic.AddUint64(&mmUpdateAndGetLastInsertID.beforeUpdateAndGetLastInsertIDCounter, 1)
+	defer mm_atomic.AddUint64(&mmUpdateAndGetLastInsertID.afterUpdateAndGetLastInsertIDCounter, 1)
 
-	for _, e := range m.UpdateAndGetLastInsertIDMock.expectations {
-		if minimock.Equal(*e.params, StatementMockUpdateAndGetLastInsertIDParams{ctx, args}) {
+	if mmUpdateAndGetLastInsertID.inspectFuncUpdateAndGetLastInsertID != nil {
+		mmUpdateAndGetLastInsertID.inspectFuncUpdateAndGetLastInsertID(ctx, args...)
+	}
+
+	mm_params := &StatementMockUpdateAndGetLastInsertIDParams{ctx, args}
+
+	// Record call args
+	mmUpdateAndGetLastInsertID.UpdateAndGetLastInsertIDMock.mutex.Lock()
+	mmUpdateAndGetLastInsertID.UpdateAndGetLastInsertIDMock.callArgs = append(mmUpdateAndGetLastInsertID.UpdateAndGetLastInsertIDMock.callArgs, mm_params)
+	mmUpdateAndGetLastInsertID.UpdateAndGetLastInsertIDMock.mutex.Unlock()
+
+	for _, e := range mmUpdateAndGetLastInsertID.UpdateAndGetLastInsertIDMock.expectations {
+		if minimock.Equal(e.params, mm_params) {
 			mm_atomic.AddUint64(&e.Counter, 1)
 			return e.results.i1, e.results.err
 		}
 	}
 
-	if m.UpdateAndGetLastInsertIDMock.defaultExpectation != nil {
-		mm_atomic.AddUint64(&m.UpdateAndGetLastInsertIDMock.defaultExpectation.Counter, 1)
-		want := m.UpdateAndGetLastInsertIDMock.defaultExpectation.params
-		got := StatementMockUpdateAndGetLastInsertIDParams{ctx, args}
-		if want != nil && !minimock.Equal(*want, got) {
-			m.t.Errorf("StatementMock.UpdateAndGetLastInsertID got unexpected parameters, want: %#v, got: %#v%s\n", *want, got, minimock.Diff(*want, got))
+	if mmUpdateAndGetLastInsertID.UpdateAndGetLastInsertIDMock.defaultExpectation != nil {
+		mm_atomic.AddUint64(&mmUpdateAndGetLastInsertID.UpdateAndGetLastInsertIDMock.defaultExpectation.Counter, 1)
+		mm_want := mmUpdateAndGetLastInsertID.UpdateAndGetLastInsertIDMock.defaultExpectation.params
+		mm_got := StatementMockUpdateAndGetLastInsertIDParams{ctx, args}
+		if mm_want != nil && !minimock.Equal(*mm_want, mm_got) {
+			mmUpdateAndGetLastInsertID.t.Errorf("StatementMock.UpdateAndGetLastInsertID got unexpected parameters, want: %#v, got: %#v%s\n", *mm_want, mm_got, minimock.Diff(*mm_want, mm_got))
 		}
 
-		results := m.UpdateAndGetLastInsertIDMock.defaultExpectation.results
-		if results == nil {
-			m.t.Fatal("No results are set for the StatementMock.UpdateAndGetLastInsertID")
+		mm_results := mmUpdateAndGetLastInsertID.UpdateAndGetLastInsertIDMock.defaultExpectation.results
+		if mm_results == nil {
+			mmUpdateAndGetLastInsertID.t.Fatal("No results are set for the StatementMock.UpdateAndGetLastInsertID")
 		}
-		return (*results).i1, (*results).err
+		return (*mm_results).i1, (*mm_results).err
 	}
-	if m.funcUpdateAndGetLastInsertID != nil {
-		return m.funcUpdateAndGetLastInsertID(ctx, args...)
+	if mmUpdateAndGetLastInsertID.funcUpdateAndGetLastInsertID != nil {
+		return mmUpdateAndGetLastInsertID.funcUpdateAndGetLastInsertID(ctx, args...)
 	}
-	m.t.Fatalf("Unexpected call to StatementMock.UpdateAndGetLastInsertID. %v %v", ctx, args)
+	mmUpdateAndGetLastInsertID.t.Fatalf("Unexpected call to StatementMock.UpdateAndGetLastInsertID. %v %v", ctx, args)
 	return
 }
 
 // UpdateAndGetLastInsertIDAfterCounter returns a count of finished StatementMock.UpdateAndGetLastInsertID invocations
-func (m *StatementMock) UpdateAndGetLastInsertIDAfterCounter() uint64 {
-	return mm_atomic.LoadUint64(&m.afterUpdateAndGetLastInsertIDCounter)
+func (mmUpdateAndGetLastInsertID *StatementMock) UpdateAndGetLastInsertIDAfterCounter() uint64 {
+	return mm_atomic.LoadUint64(&mmUpdateAndGetLastInsertID.afterUpdateAndGetLastInsertIDCounter)
 }
 
 // UpdateAndGetLastInsertIDBeforeCounter returns a count of StatementMock.UpdateAndGetLastInsertID invocations
-func (m *StatementMock) UpdateAndGetLastInsertIDBeforeCounter() uint64 {
-	return mm_atomic.LoadUint64(&m.beforeUpdateAndGetLastInsertIDCounter)
+func (mmUpdateAndGetLastInsertID *StatementMock) UpdateAndGetLastInsertIDBeforeCounter() uint64 {
+	return mm_atomic.LoadUint64(&mmUpdateAndGetLastInsertID.beforeUpdateAndGetLastInsertIDCounter)
+}
+
+// Calls returns a list of arguments used in each call to StatementMock.UpdateAndGetLastInsertID.
+// The list is in the same order as the calls were made (i.e. recent calls have a higher index)
+func (mmUpdateAndGetLastInsertID *mStatementMockUpdateAndGetLastInsertID) Calls() []*StatementMockUpdateAndGetLastInsertIDParams {
+	mmUpdateAndGetLastInsertID.mutex.RLock()
+
+	argCopy := make([]*StatementMockUpdateAndGetLastInsertIDParams, len(mmUpdateAndGetLastInsertID.callArgs))
+	copy(argCopy, mmUpdateAndGetLastInsertID.callArgs)
+
+	mmUpdateAndGetLastInsertID.mutex.RUnlock()
+
+	return argCopy
 }
 
 // MinimockUpdateAndGetLastInsertIDDone returns true if the count of the UpdateAndGetLastInsertID invocations corresponds
@@ -776,6 +944,9 @@ type mStatementMockUpdateAndGetRowsAffected struct {
 	mock               *StatementMock
 	defaultExpectation *StatementMockUpdateAndGetRowsAffectedExpectation
 	expectations       []*StatementMockUpdateAndGetRowsAffectedExpectation
+
+	callArgs []*StatementMockUpdateAndGetRowsAffectedParams
+	mutex    sync.RWMutex
 }
 
 // StatementMockUpdateAndGetRowsAffectedExpectation specifies expectation struct of the Statement.UpdateAndGetRowsAffected
@@ -799,64 +970,75 @@ type StatementMockUpdateAndGetRowsAffectedResults struct {
 }
 
 // Expect sets up expected params for Statement.UpdateAndGetRowsAffected
-func (m *mStatementMockUpdateAndGetRowsAffected) Expect(ctx context.Context, args ...interface{}) *mStatementMockUpdateAndGetRowsAffected {
-	if m.mock.funcUpdateAndGetRowsAffected != nil {
-		m.mock.t.Fatalf("StatementMock.UpdateAndGetRowsAffected mock is already set by Set")
+func (mmUpdateAndGetRowsAffected *mStatementMockUpdateAndGetRowsAffected) Expect(ctx context.Context, args ...interface{}) *mStatementMockUpdateAndGetRowsAffected {
+	if mmUpdateAndGetRowsAffected.mock.funcUpdateAndGetRowsAffected != nil {
+		mmUpdateAndGetRowsAffected.mock.t.Fatalf("StatementMock.UpdateAndGetRowsAffected mock is already set by Set")
 	}
 
-	if m.defaultExpectation == nil {
-		m.defaultExpectation = &StatementMockUpdateAndGetRowsAffectedExpectation{}
+	if mmUpdateAndGetRowsAffected.defaultExpectation == nil {
+		mmUpdateAndGetRowsAffected.defaultExpectation = &StatementMockUpdateAndGetRowsAffectedExpectation{}
 	}
 
-	m.defaultExpectation.params = &StatementMockUpdateAndGetRowsAffectedParams{ctx, args}
-	for _, e := range m.expectations {
-		if minimock.Equal(e.params, m.defaultExpectation.params) {
-			m.mock.t.Fatalf("Expectation set by When has same params: %#v", *m.defaultExpectation.params)
+	mmUpdateAndGetRowsAffected.defaultExpectation.params = &StatementMockUpdateAndGetRowsAffectedParams{ctx, args}
+	for _, e := range mmUpdateAndGetRowsAffected.expectations {
+		if minimock.Equal(e.params, mmUpdateAndGetRowsAffected.defaultExpectation.params) {
+			mmUpdateAndGetRowsAffected.mock.t.Fatalf("Expectation set by When has same params: %#v", *mmUpdateAndGetRowsAffected.defaultExpectation.params)
 		}
 	}
 
-	return m
+	return mmUpdateAndGetRowsAffected
+}
+
+// Inspect accepts an inspector function that has same arguments as the Statement.UpdateAndGetRowsAffected
+func (mmUpdateAndGetRowsAffected *mStatementMockUpdateAndGetRowsAffected) Inspect(f func(ctx context.Context, args ...interface{})) *mStatementMockUpdateAndGetRowsAffected {
+	if mmUpdateAndGetRowsAffected.mock.inspectFuncUpdateAndGetRowsAffected != nil {
+		mmUpdateAndGetRowsAffected.mock.t.Fatalf("Inspect function is already set for StatementMock.UpdateAndGetRowsAffected")
+	}
+
+	mmUpdateAndGetRowsAffected.mock.inspectFuncUpdateAndGetRowsAffected = f
+
+	return mmUpdateAndGetRowsAffected
 }
 
 // Return sets up results that will be returned by Statement.UpdateAndGetRowsAffected
-func (m *mStatementMockUpdateAndGetRowsAffected) Return(i1 int64, err error) *StatementMock {
-	if m.mock.funcUpdateAndGetRowsAffected != nil {
-		m.mock.t.Fatalf("StatementMock.UpdateAndGetRowsAffected mock is already set by Set")
+func (mmUpdateAndGetRowsAffected *mStatementMockUpdateAndGetRowsAffected) Return(i1 int64, err error) *StatementMock {
+	if mmUpdateAndGetRowsAffected.mock.funcUpdateAndGetRowsAffected != nil {
+		mmUpdateAndGetRowsAffected.mock.t.Fatalf("StatementMock.UpdateAndGetRowsAffected mock is already set by Set")
 	}
 
-	if m.defaultExpectation == nil {
-		m.defaultExpectation = &StatementMockUpdateAndGetRowsAffectedExpectation{mock: m.mock}
+	if mmUpdateAndGetRowsAffected.defaultExpectation == nil {
+		mmUpdateAndGetRowsAffected.defaultExpectation = &StatementMockUpdateAndGetRowsAffectedExpectation{mock: mmUpdateAndGetRowsAffected.mock}
 	}
-	m.defaultExpectation.results = &StatementMockUpdateAndGetRowsAffectedResults{i1, err}
-	return m.mock
+	mmUpdateAndGetRowsAffected.defaultExpectation.results = &StatementMockUpdateAndGetRowsAffectedResults{i1, err}
+	return mmUpdateAndGetRowsAffected.mock
 }
 
 //Set uses given function f to mock the Statement.UpdateAndGetRowsAffected method
-func (m *mStatementMockUpdateAndGetRowsAffected) Set(f func(ctx context.Context, args ...interface{}) (i1 int64, err error)) *StatementMock {
-	if m.defaultExpectation != nil {
-		m.mock.t.Fatalf("Default expectation is already set for the Statement.UpdateAndGetRowsAffected method")
+func (mmUpdateAndGetRowsAffected *mStatementMockUpdateAndGetRowsAffected) Set(f func(ctx context.Context, args ...interface{}) (i1 int64, err error)) *StatementMock {
+	if mmUpdateAndGetRowsAffected.defaultExpectation != nil {
+		mmUpdateAndGetRowsAffected.mock.t.Fatalf("Default expectation is already set for the Statement.UpdateAndGetRowsAffected method")
 	}
 
-	if len(m.expectations) > 0 {
-		m.mock.t.Fatalf("Some expectations are already set for the Statement.UpdateAndGetRowsAffected method")
+	if len(mmUpdateAndGetRowsAffected.expectations) > 0 {
+		mmUpdateAndGetRowsAffected.mock.t.Fatalf("Some expectations are already set for the Statement.UpdateAndGetRowsAffected method")
 	}
 
-	m.mock.funcUpdateAndGetRowsAffected = f
-	return m.mock
+	mmUpdateAndGetRowsAffected.mock.funcUpdateAndGetRowsAffected = f
+	return mmUpdateAndGetRowsAffected.mock
 }
 
 // When sets expectation for the Statement.UpdateAndGetRowsAffected which will trigger the result defined by the following
 // Then helper
-func (m *mStatementMockUpdateAndGetRowsAffected) When(ctx context.Context, args ...interface{}) *StatementMockUpdateAndGetRowsAffectedExpectation {
-	if m.mock.funcUpdateAndGetRowsAffected != nil {
-		m.mock.t.Fatalf("StatementMock.UpdateAndGetRowsAffected mock is already set by Set")
+func (mmUpdateAndGetRowsAffected *mStatementMockUpdateAndGetRowsAffected) When(ctx context.Context, args ...interface{}) *StatementMockUpdateAndGetRowsAffectedExpectation {
+	if mmUpdateAndGetRowsAffected.mock.funcUpdateAndGetRowsAffected != nil {
+		mmUpdateAndGetRowsAffected.mock.t.Fatalf("StatementMock.UpdateAndGetRowsAffected mock is already set by Set")
 	}
 
 	expectation := &StatementMockUpdateAndGetRowsAffectedExpectation{
-		mock:   m.mock,
+		mock:   mmUpdateAndGetRowsAffected.mock,
 		params: &StatementMockUpdateAndGetRowsAffectedParams{ctx, args},
 	}
-	m.expectations = append(m.expectations, expectation)
+	mmUpdateAndGetRowsAffected.expectations = append(mmUpdateAndGetRowsAffected.expectations, expectation)
 	return expectation
 }
 
@@ -867,46 +1049,70 @@ func (e *StatementMockUpdateAndGetRowsAffectedExpectation) Then(i1 int64, err er
 }
 
 // UpdateAndGetRowsAffected implements Statement
-func (m *StatementMock) UpdateAndGetRowsAffected(ctx context.Context, args ...interface{}) (i1 int64, err error) {
-	mm_atomic.AddUint64(&m.beforeUpdateAndGetRowsAffectedCounter, 1)
-	defer mm_atomic.AddUint64(&m.afterUpdateAndGetRowsAffectedCounter, 1)
+func (mmUpdateAndGetRowsAffected *StatementMock) UpdateAndGetRowsAffected(ctx context.Context, args ...interface{}) (i1 int64, err error) {
+	mm_atomic.AddUint64(&mmUpdateAndGetRowsAffected.beforeUpdateAndGetRowsAffectedCounter, 1)
+	defer mm_atomic.AddUint64(&mmUpdateAndGetRowsAffected.afterUpdateAndGetRowsAffectedCounter, 1)
 
-	for _, e := range m.UpdateAndGetRowsAffectedMock.expectations {
-		if minimock.Equal(*e.params, StatementMockUpdateAndGetRowsAffectedParams{ctx, args}) {
+	if mmUpdateAndGetRowsAffected.inspectFuncUpdateAndGetRowsAffected != nil {
+		mmUpdateAndGetRowsAffected.inspectFuncUpdateAndGetRowsAffected(ctx, args...)
+	}
+
+	mm_params := &StatementMockUpdateAndGetRowsAffectedParams{ctx, args}
+
+	// Record call args
+	mmUpdateAndGetRowsAffected.UpdateAndGetRowsAffectedMock.mutex.Lock()
+	mmUpdateAndGetRowsAffected.UpdateAndGetRowsAffectedMock.callArgs = append(mmUpdateAndGetRowsAffected.UpdateAndGetRowsAffectedMock.callArgs, mm_params)
+	mmUpdateAndGetRowsAffected.UpdateAndGetRowsAffectedMock.mutex.Unlock()
+
+	for _, e := range mmUpdateAndGetRowsAffected.UpdateAndGetRowsAffectedMock.expectations {
+		if minimock.Equal(e.params, mm_params) {
 			mm_atomic.AddUint64(&e.Counter, 1)
 			return e.results.i1, e.results.err
 		}
 	}
 
-	if m.UpdateAndGetRowsAffectedMock.defaultExpectation != nil {
-		mm_atomic.AddUint64(&m.UpdateAndGetRowsAffectedMock.defaultExpectation.Counter, 1)
-		want := m.UpdateAndGetRowsAffectedMock.defaultExpectation.params
-		got := StatementMockUpdateAndGetRowsAffectedParams{ctx, args}
-		if want != nil && !minimock.Equal(*want, got) {
-			m.t.Errorf("StatementMock.UpdateAndGetRowsAffected got unexpected parameters, want: %#v, got: %#v%s\n", *want, got, minimock.Diff(*want, got))
+	if mmUpdateAndGetRowsAffected.UpdateAndGetRowsAffectedMock.defaultExpectation != nil {
+		mm_atomic.AddUint64(&mmUpdateAndGetRowsAffected.UpdateAndGetRowsAffectedMock.defaultExpectation.Counter, 1)
+		mm_want := mmUpdateAndGetRowsAffected.UpdateAndGetRowsAffectedMock.defaultExpectation.params
+		mm_got := StatementMockUpdateAndGetRowsAffectedParams{ctx, args}
+		if mm_want != nil && !minimock.Equal(*mm_want, mm_got) {
+			mmUpdateAndGetRowsAffected.t.Errorf("StatementMock.UpdateAndGetRowsAffected got unexpected parameters, want: %#v, got: %#v%s\n", *mm_want, mm_got, minimock.Diff(*mm_want, mm_got))
 		}
 
-		results := m.UpdateAndGetRowsAffectedMock.defaultExpectation.results
-		if results == nil {
-			m.t.Fatal("No results are set for the StatementMock.UpdateAndGetRowsAffected")
+		mm_results := mmUpdateAndGetRowsAffected.UpdateAndGetRowsAffectedMock.defaultExpectation.results
+		if mm_results == nil {
+			mmUpdateAndGetRowsAffected.t.Fatal("No results are set for the StatementMock.UpdateAndGetRowsAffected")
 		}
-		return (*results).i1, (*results).err
+		return (*mm_results).i1, (*mm_results).err
 	}
-	if m.funcUpdateAndGetRowsAffected != nil {
-		return m.funcUpdateAndGetRowsAffected(ctx, args...)
+	if mmUpdateAndGetRowsAffected.funcUpdateAndGetRowsAffected != nil {
+		return mmUpdateAndGetRowsAffected.funcUpdateAndGetRowsAffected(ctx, args...)
 	}
-	m.t.Fatalf("Unexpected call to StatementMock.UpdateAndGetRowsAffected. %v %v", ctx, args)
+	mmUpdateAndGetRowsAffected.t.Fatalf("Unexpected call to StatementMock.UpdateAndGetRowsAffected. %v %v", ctx, args)
 	return
 }
 
 // UpdateAndGetRowsAffectedAfterCounter returns a count of finished StatementMock.UpdateAndGetRowsAffected invocations
-func (m *StatementMock) UpdateAndGetRowsAffectedAfterCounter() uint64 {
-	return mm_atomic.LoadUint64(&m.afterUpdateAndGetRowsAffectedCounter)
+func (mmUpdateAndGetRowsAffected *StatementMock) UpdateAndGetRowsAffectedAfterCounter() uint64 {
+	return mm_atomic.LoadUint64(&mmUpdateAndGetRowsAffected.afterUpdateAndGetRowsAffectedCounter)
 }
 
 // UpdateAndGetRowsAffectedBeforeCounter returns a count of StatementMock.UpdateAndGetRowsAffected invocations
-func (m *StatementMock) UpdateAndGetRowsAffectedBeforeCounter() uint64 {
-	return mm_atomic.LoadUint64(&m.beforeUpdateAndGetRowsAffectedCounter)
+func (mmUpdateAndGetRowsAffected *StatementMock) UpdateAndGetRowsAffectedBeforeCounter() uint64 {
+	return mm_atomic.LoadUint64(&mmUpdateAndGetRowsAffected.beforeUpdateAndGetRowsAffectedCounter)
+}
+
+// Calls returns a list of arguments used in each call to StatementMock.UpdateAndGetRowsAffected.
+// The list is in the same order as the calls were made (i.e. recent calls have a higher index)
+func (mmUpdateAndGetRowsAffected *mStatementMockUpdateAndGetRowsAffected) Calls() []*StatementMockUpdateAndGetRowsAffectedParams {
+	mmUpdateAndGetRowsAffected.mutex.RLock()
+
+	argCopy := make([]*StatementMockUpdateAndGetRowsAffectedParams, len(mmUpdateAndGetRowsAffected.callArgs))
+	copy(argCopy, mmUpdateAndGetRowsAffected.callArgs)
+
+	mmUpdateAndGetRowsAffected.mutex.RUnlock()
+
+	return argCopy
 }
 
 // MinimockUpdateAndGetRowsAffectedDone returns true if the count of the UpdateAndGetRowsAffected invocations corresponds

@@ -5,10 +5,11 @@ package libsql
 import (
 	"context"
 	"database/sql"
+	"sync"
 	mm_atomic "sync/atomic"
 	mm_time "time"
 
-	"github.com/gojuno/minimock"
+	"github.com/gojuno/minimock/v3"
 )
 
 // SqlStmtMock implements sqlStmt
@@ -16,16 +17,19 @@ type SqlStmtMock struct {
 	t minimock.Tester
 
 	funcClose          func() (err error)
+	inspectFuncClose   func()
 	afterCloseCounter  uint64
 	beforeCloseCounter uint64
 	CloseMock          mSqlStmtMockClose
 
 	funcExec          func(ctx context.Context, args ...interface{}) (r1 sql.Result, err error)
+	inspectFuncExec   func(ctx context.Context, args ...interface{})
 	afterExecCounter  uint64
 	beforeExecCounter uint64
 	ExecMock          mSqlStmtMockExec
 
 	funcQuery          func(ctx context.Context, args ...interface{}) (s1 sqlRows, err error)
+	inspectFuncQuery   func(ctx context.Context, args ...interface{})
 	afterQueryCounter  uint64
 	beforeQueryCounter uint64
 	QueryMock          mSqlStmtMockQuery
@@ -37,9 +41,14 @@ func NewSqlStmtMock(t minimock.Tester) *SqlStmtMock {
 	if controller, ok := t.(minimock.MockController); ok {
 		controller.RegisterMocker(m)
 	}
+
 	m.CloseMock = mSqlStmtMockClose{mock: m}
+
 	m.ExecMock = mSqlStmtMockExec{mock: m}
+	m.ExecMock.callArgs = []*SqlStmtMockExecParams{}
+
 	m.QueryMock = mSqlStmtMockQuery{mock: m}
+	m.QueryMock.callArgs = []*SqlStmtMockQueryParams{}
 
 	return m
 }
@@ -64,74 +73,89 @@ type SqlStmtMockCloseResults struct {
 }
 
 // Expect sets up expected params for sqlStmt.Close
-func (m *mSqlStmtMockClose) Expect() *mSqlStmtMockClose {
-	if m.mock.funcClose != nil {
-		m.mock.t.Fatalf("SqlStmtMock.Close mock is already set by Set")
+func (mmClose *mSqlStmtMockClose) Expect() *mSqlStmtMockClose {
+	if mmClose.mock.funcClose != nil {
+		mmClose.mock.t.Fatalf("SqlStmtMock.Close mock is already set by Set")
 	}
 
-	if m.defaultExpectation == nil {
-		m.defaultExpectation = &SqlStmtMockCloseExpectation{}
+	if mmClose.defaultExpectation == nil {
+		mmClose.defaultExpectation = &SqlStmtMockCloseExpectation{}
 	}
 
-	return m
+	return mmClose
+}
+
+// Inspect accepts an inspector function that has same arguments as the sqlStmt.Close
+func (mmClose *mSqlStmtMockClose) Inspect(f func()) *mSqlStmtMockClose {
+	if mmClose.mock.inspectFuncClose != nil {
+		mmClose.mock.t.Fatalf("Inspect function is already set for SqlStmtMock.Close")
+	}
+
+	mmClose.mock.inspectFuncClose = f
+
+	return mmClose
 }
 
 // Return sets up results that will be returned by sqlStmt.Close
-func (m *mSqlStmtMockClose) Return(err error) *SqlStmtMock {
-	if m.mock.funcClose != nil {
-		m.mock.t.Fatalf("SqlStmtMock.Close mock is already set by Set")
+func (mmClose *mSqlStmtMockClose) Return(err error) *SqlStmtMock {
+	if mmClose.mock.funcClose != nil {
+		mmClose.mock.t.Fatalf("SqlStmtMock.Close mock is already set by Set")
 	}
 
-	if m.defaultExpectation == nil {
-		m.defaultExpectation = &SqlStmtMockCloseExpectation{mock: m.mock}
+	if mmClose.defaultExpectation == nil {
+		mmClose.defaultExpectation = &SqlStmtMockCloseExpectation{mock: mmClose.mock}
 	}
-	m.defaultExpectation.results = &SqlStmtMockCloseResults{err}
-	return m.mock
+	mmClose.defaultExpectation.results = &SqlStmtMockCloseResults{err}
+	return mmClose.mock
 }
 
 //Set uses given function f to mock the sqlStmt.Close method
-func (m *mSqlStmtMockClose) Set(f func() (err error)) *SqlStmtMock {
-	if m.defaultExpectation != nil {
-		m.mock.t.Fatalf("Default expectation is already set for the sqlStmt.Close method")
+func (mmClose *mSqlStmtMockClose) Set(f func() (err error)) *SqlStmtMock {
+	if mmClose.defaultExpectation != nil {
+		mmClose.mock.t.Fatalf("Default expectation is already set for the sqlStmt.Close method")
 	}
 
-	if len(m.expectations) > 0 {
-		m.mock.t.Fatalf("Some expectations are already set for the sqlStmt.Close method")
+	if len(mmClose.expectations) > 0 {
+		mmClose.mock.t.Fatalf("Some expectations are already set for the sqlStmt.Close method")
 	}
 
-	m.mock.funcClose = f
-	return m.mock
+	mmClose.mock.funcClose = f
+	return mmClose.mock
 }
 
 // Close implements sqlStmt
-func (m *SqlStmtMock) Close() (err error) {
-	mm_atomic.AddUint64(&m.beforeCloseCounter, 1)
-	defer mm_atomic.AddUint64(&m.afterCloseCounter, 1)
+func (mmClose *SqlStmtMock) Close() (err error) {
+	mm_atomic.AddUint64(&mmClose.beforeCloseCounter, 1)
+	defer mm_atomic.AddUint64(&mmClose.afterCloseCounter, 1)
 
-	if m.CloseMock.defaultExpectation != nil {
-		mm_atomic.AddUint64(&m.CloseMock.defaultExpectation.Counter, 1)
+	if mmClose.inspectFuncClose != nil {
+		mmClose.inspectFuncClose()
+	}
 
-		results := m.CloseMock.defaultExpectation.results
-		if results == nil {
-			m.t.Fatal("No results are set for the SqlStmtMock.Close")
+	if mmClose.CloseMock.defaultExpectation != nil {
+		mm_atomic.AddUint64(&mmClose.CloseMock.defaultExpectation.Counter, 1)
+
+		mm_results := mmClose.CloseMock.defaultExpectation.results
+		if mm_results == nil {
+			mmClose.t.Fatal("No results are set for the SqlStmtMock.Close")
 		}
-		return (*results).err
+		return (*mm_results).err
 	}
-	if m.funcClose != nil {
-		return m.funcClose()
+	if mmClose.funcClose != nil {
+		return mmClose.funcClose()
 	}
-	m.t.Fatalf("Unexpected call to SqlStmtMock.Close.")
+	mmClose.t.Fatalf("Unexpected call to SqlStmtMock.Close.")
 	return
 }
 
 // CloseAfterCounter returns a count of finished SqlStmtMock.Close invocations
-func (m *SqlStmtMock) CloseAfterCounter() uint64 {
-	return mm_atomic.LoadUint64(&m.afterCloseCounter)
+func (mmClose *SqlStmtMock) CloseAfterCounter() uint64 {
+	return mm_atomic.LoadUint64(&mmClose.afterCloseCounter)
 }
 
 // CloseBeforeCounter returns a count of SqlStmtMock.Close invocations
-func (m *SqlStmtMock) CloseBeforeCounter() uint64 {
-	return mm_atomic.LoadUint64(&m.beforeCloseCounter)
+func (mmClose *SqlStmtMock) CloseBeforeCounter() uint64 {
+	return mm_atomic.LoadUint64(&mmClose.beforeCloseCounter)
 }
 
 // MinimockCloseDone returns true if the count of the Close invocations corresponds
@@ -176,6 +200,9 @@ type mSqlStmtMockExec struct {
 	mock               *SqlStmtMock
 	defaultExpectation *SqlStmtMockExecExpectation
 	expectations       []*SqlStmtMockExecExpectation
+
+	callArgs []*SqlStmtMockExecParams
+	mutex    sync.RWMutex
 }
 
 // SqlStmtMockExecExpectation specifies expectation struct of the sqlStmt.Exec
@@ -199,64 +226,75 @@ type SqlStmtMockExecResults struct {
 }
 
 // Expect sets up expected params for sqlStmt.Exec
-func (m *mSqlStmtMockExec) Expect(ctx context.Context, args ...interface{}) *mSqlStmtMockExec {
-	if m.mock.funcExec != nil {
-		m.mock.t.Fatalf("SqlStmtMock.Exec mock is already set by Set")
+func (mmExec *mSqlStmtMockExec) Expect(ctx context.Context, args ...interface{}) *mSqlStmtMockExec {
+	if mmExec.mock.funcExec != nil {
+		mmExec.mock.t.Fatalf("SqlStmtMock.Exec mock is already set by Set")
 	}
 
-	if m.defaultExpectation == nil {
-		m.defaultExpectation = &SqlStmtMockExecExpectation{}
+	if mmExec.defaultExpectation == nil {
+		mmExec.defaultExpectation = &SqlStmtMockExecExpectation{}
 	}
 
-	m.defaultExpectation.params = &SqlStmtMockExecParams{ctx, args}
-	for _, e := range m.expectations {
-		if minimock.Equal(e.params, m.defaultExpectation.params) {
-			m.mock.t.Fatalf("Expectation set by When has same params: %#v", *m.defaultExpectation.params)
+	mmExec.defaultExpectation.params = &SqlStmtMockExecParams{ctx, args}
+	for _, e := range mmExec.expectations {
+		if minimock.Equal(e.params, mmExec.defaultExpectation.params) {
+			mmExec.mock.t.Fatalf("Expectation set by When has same params: %#v", *mmExec.defaultExpectation.params)
 		}
 	}
 
-	return m
+	return mmExec
+}
+
+// Inspect accepts an inspector function that has same arguments as the sqlStmt.Exec
+func (mmExec *mSqlStmtMockExec) Inspect(f func(ctx context.Context, args ...interface{})) *mSqlStmtMockExec {
+	if mmExec.mock.inspectFuncExec != nil {
+		mmExec.mock.t.Fatalf("Inspect function is already set for SqlStmtMock.Exec")
+	}
+
+	mmExec.mock.inspectFuncExec = f
+
+	return mmExec
 }
 
 // Return sets up results that will be returned by sqlStmt.Exec
-func (m *mSqlStmtMockExec) Return(r1 sql.Result, err error) *SqlStmtMock {
-	if m.mock.funcExec != nil {
-		m.mock.t.Fatalf("SqlStmtMock.Exec mock is already set by Set")
+func (mmExec *mSqlStmtMockExec) Return(r1 sql.Result, err error) *SqlStmtMock {
+	if mmExec.mock.funcExec != nil {
+		mmExec.mock.t.Fatalf("SqlStmtMock.Exec mock is already set by Set")
 	}
 
-	if m.defaultExpectation == nil {
-		m.defaultExpectation = &SqlStmtMockExecExpectation{mock: m.mock}
+	if mmExec.defaultExpectation == nil {
+		mmExec.defaultExpectation = &SqlStmtMockExecExpectation{mock: mmExec.mock}
 	}
-	m.defaultExpectation.results = &SqlStmtMockExecResults{r1, err}
-	return m.mock
+	mmExec.defaultExpectation.results = &SqlStmtMockExecResults{r1, err}
+	return mmExec.mock
 }
 
 //Set uses given function f to mock the sqlStmt.Exec method
-func (m *mSqlStmtMockExec) Set(f func(ctx context.Context, args ...interface{}) (r1 sql.Result, err error)) *SqlStmtMock {
-	if m.defaultExpectation != nil {
-		m.mock.t.Fatalf("Default expectation is already set for the sqlStmt.Exec method")
+func (mmExec *mSqlStmtMockExec) Set(f func(ctx context.Context, args ...interface{}) (r1 sql.Result, err error)) *SqlStmtMock {
+	if mmExec.defaultExpectation != nil {
+		mmExec.mock.t.Fatalf("Default expectation is already set for the sqlStmt.Exec method")
 	}
 
-	if len(m.expectations) > 0 {
-		m.mock.t.Fatalf("Some expectations are already set for the sqlStmt.Exec method")
+	if len(mmExec.expectations) > 0 {
+		mmExec.mock.t.Fatalf("Some expectations are already set for the sqlStmt.Exec method")
 	}
 
-	m.mock.funcExec = f
-	return m.mock
+	mmExec.mock.funcExec = f
+	return mmExec.mock
 }
 
 // When sets expectation for the sqlStmt.Exec which will trigger the result defined by the following
 // Then helper
-func (m *mSqlStmtMockExec) When(ctx context.Context, args ...interface{}) *SqlStmtMockExecExpectation {
-	if m.mock.funcExec != nil {
-		m.mock.t.Fatalf("SqlStmtMock.Exec mock is already set by Set")
+func (mmExec *mSqlStmtMockExec) When(ctx context.Context, args ...interface{}) *SqlStmtMockExecExpectation {
+	if mmExec.mock.funcExec != nil {
+		mmExec.mock.t.Fatalf("SqlStmtMock.Exec mock is already set by Set")
 	}
 
 	expectation := &SqlStmtMockExecExpectation{
-		mock:   m.mock,
+		mock:   mmExec.mock,
 		params: &SqlStmtMockExecParams{ctx, args},
 	}
-	m.expectations = append(m.expectations, expectation)
+	mmExec.expectations = append(mmExec.expectations, expectation)
 	return expectation
 }
 
@@ -267,46 +305,70 @@ func (e *SqlStmtMockExecExpectation) Then(r1 sql.Result, err error) *SqlStmtMock
 }
 
 // Exec implements sqlStmt
-func (m *SqlStmtMock) Exec(ctx context.Context, args ...interface{}) (r1 sql.Result, err error) {
-	mm_atomic.AddUint64(&m.beforeExecCounter, 1)
-	defer mm_atomic.AddUint64(&m.afterExecCounter, 1)
+func (mmExec *SqlStmtMock) Exec(ctx context.Context, args ...interface{}) (r1 sql.Result, err error) {
+	mm_atomic.AddUint64(&mmExec.beforeExecCounter, 1)
+	defer mm_atomic.AddUint64(&mmExec.afterExecCounter, 1)
 
-	for _, e := range m.ExecMock.expectations {
-		if minimock.Equal(*e.params, SqlStmtMockExecParams{ctx, args}) {
+	if mmExec.inspectFuncExec != nil {
+		mmExec.inspectFuncExec(ctx, args...)
+	}
+
+	mm_params := &SqlStmtMockExecParams{ctx, args}
+
+	// Record call args
+	mmExec.ExecMock.mutex.Lock()
+	mmExec.ExecMock.callArgs = append(mmExec.ExecMock.callArgs, mm_params)
+	mmExec.ExecMock.mutex.Unlock()
+
+	for _, e := range mmExec.ExecMock.expectations {
+		if minimock.Equal(e.params, mm_params) {
 			mm_atomic.AddUint64(&e.Counter, 1)
 			return e.results.r1, e.results.err
 		}
 	}
 
-	if m.ExecMock.defaultExpectation != nil {
-		mm_atomic.AddUint64(&m.ExecMock.defaultExpectation.Counter, 1)
-		want := m.ExecMock.defaultExpectation.params
-		got := SqlStmtMockExecParams{ctx, args}
-		if want != nil && !minimock.Equal(*want, got) {
-			m.t.Errorf("SqlStmtMock.Exec got unexpected parameters, want: %#v, got: %#v%s\n", *want, got, minimock.Diff(*want, got))
+	if mmExec.ExecMock.defaultExpectation != nil {
+		mm_atomic.AddUint64(&mmExec.ExecMock.defaultExpectation.Counter, 1)
+		mm_want := mmExec.ExecMock.defaultExpectation.params
+		mm_got := SqlStmtMockExecParams{ctx, args}
+		if mm_want != nil && !minimock.Equal(*mm_want, mm_got) {
+			mmExec.t.Errorf("SqlStmtMock.Exec got unexpected parameters, want: %#v, got: %#v%s\n", *mm_want, mm_got, minimock.Diff(*mm_want, mm_got))
 		}
 
-		results := m.ExecMock.defaultExpectation.results
-		if results == nil {
-			m.t.Fatal("No results are set for the SqlStmtMock.Exec")
+		mm_results := mmExec.ExecMock.defaultExpectation.results
+		if mm_results == nil {
+			mmExec.t.Fatal("No results are set for the SqlStmtMock.Exec")
 		}
-		return (*results).r1, (*results).err
+		return (*mm_results).r1, (*mm_results).err
 	}
-	if m.funcExec != nil {
-		return m.funcExec(ctx, args...)
+	if mmExec.funcExec != nil {
+		return mmExec.funcExec(ctx, args...)
 	}
-	m.t.Fatalf("Unexpected call to SqlStmtMock.Exec. %v %v", ctx, args)
+	mmExec.t.Fatalf("Unexpected call to SqlStmtMock.Exec. %v %v", ctx, args)
 	return
 }
 
 // ExecAfterCounter returns a count of finished SqlStmtMock.Exec invocations
-func (m *SqlStmtMock) ExecAfterCounter() uint64 {
-	return mm_atomic.LoadUint64(&m.afterExecCounter)
+func (mmExec *SqlStmtMock) ExecAfterCounter() uint64 {
+	return mm_atomic.LoadUint64(&mmExec.afterExecCounter)
 }
 
 // ExecBeforeCounter returns a count of SqlStmtMock.Exec invocations
-func (m *SqlStmtMock) ExecBeforeCounter() uint64 {
-	return mm_atomic.LoadUint64(&m.beforeExecCounter)
+func (mmExec *SqlStmtMock) ExecBeforeCounter() uint64 {
+	return mm_atomic.LoadUint64(&mmExec.beforeExecCounter)
+}
+
+// Calls returns a list of arguments used in each call to SqlStmtMock.Exec.
+// The list is in the same order as the calls were made (i.e. recent calls have a higher index)
+func (mmExec *mSqlStmtMockExec) Calls() []*SqlStmtMockExecParams {
+	mmExec.mutex.RLock()
+
+	argCopy := make([]*SqlStmtMockExecParams, len(mmExec.callArgs))
+	copy(argCopy, mmExec.callArgs)
+
+	mmExec.mutex.RUnlock()
+
+	return argCopy
 }
 
 // MinimockExecDone returns true if the count of the Exec invocations corresponds
@@ -355,6 +417,9 @@ type mSqlStmtMockQuery struct {
 	mock               *SqlStmtMock
 	defaultExpectation *SqlStmtMockQueryExpectation
 	expectations       []*SqlStmtMockQueryExpectation
+
+	callArgs []*SqlStmtMockQueryParams
+	mutex    sync.RWMutex
 }
 
 // SqlStmtMockQueryExpectation specifies expectation struct of the sqlStmt.Query
@@ -378,64 +443,75 @@ type SqlStmtMockQueryResults struct {
 }
 
 // Expect sets up expected params for sqlStmt.Query
-func (m *mSqlStmtMockQuery) Expect(ctx context.Context, args ...interface{}) *mSqlStmtMockQuery {
-	if m.mock.funcQuery != nil {
-		m.mock.t.Fatalf("SqlStmtMock.Query mock is already set by Set")
+func (mmQuery *mSqlStmtMockQuery) Expect(ctx context.Context, args ...interface{}) *mSqlStmtMockQuery {
+	if mmQuery.mock.funcQuery != nil {
+		mmQuery.mock.t.Fatalf("SqlStmtMock.Query mock is already set by Set")
 	}
 
-	if m.defaultExpectation == nil {
-		m.defaultExpectation = &SqlStmtMockQueryExpectation{}
+	if mmQuery.defaultExpectation == nil {
+		mmQuery.defaultExpectation = &SqlStmtMockQueryExpectation{}
 	}
 
-	m.defaultExpectation.params = &SqlStmtMockQueryParams{ctx, args}
-	for _, e := range m.expectations {
-		if minimock.Equal(e.params, m.defaultExpectation.params) {
-			m.mock.t.Fatalf("Expectation set by When has same params: %#v", *m.defaultExpectation.params)
+	mmQuery.defaultExpectation.params = &SqlStmtMockQueryParams{ctx, args}
+	for _, e := range mmQuery.expectations {
+		if minimock.Equal(e.params, mmQuery.defaultExpectation.params) {
+			mmQuery.mock.t.Fatalf("Expectation set by When has same params: %#v", *mmQuery.defaultExpectation.params)
 		}
 	}
 
-	return m
+	return mmQuery
+}
+
+// Inspect accepts an inspector function that has same arguments as the sqlStmt.Query
+func (mmQuery *mSqlStmtMockQuery) Inspect(f func(ctx context.Context, args ...interface{})) *mSqlStmtMockQuery {
+	if mmQuery.mock.inspectFuncQuery != nil {
+		mmQuery.mock.t.Fatalf("Inspect function is already set for SqlStmtMock.Query")
+	}
+
+	mmQuery.mock.inspectFuncQuery = f
+
+	return mmQuery
 }
 
 // Return sets up results that will be returned by sqlStmt.Query
-func (m *mSqlStmtMockQuery) Return(s1 sqlRows, err error) *SqlStmtMock {
-	if m.mock.funcQuery != nil {
-		m.mock.t.Fatalf("SqlStmtMock.Query mock is already set by Set")
+func (mmQuery *mSqlStmtMockQuery) Return(s1 sqlRows, err error) *SqlStmtMock {
+	if mmQuery.mock.funcQuery != nil {
+		mmQuery.mock.t.Fatalf("SqlStmtMock.Query mock is already set by Set")
 	}
 
-	if m.defaultExpectation == nil {
-		m.defaultExpectation = &SqlStmtMockQueryExpectation{mock: m.mock}
+	if mmQuery.defaultExpectation == nil {
+		mmQuery.defaultExpectation = &SqlStmtMockQueryExpectation{mock: mmQuery.mock}
 	}
-	m.defaultExpectation.results = &SqlStmtMockQueryResults{s1, err}
-	return m.mock
+	mmQuery.defaultExpectation.results = &SqlStmtMockQueryResults{s1, err}
+	return mmQuery.mock
 }
 
 //Set uses given function f to mock the sqlStmt.Query method
-func (m *mSqlStmtMockQuery) Set(f func(ctx context.Context, args ...interface{}) (s1 sqlRows, err error)) *SqlStmtMock {
-	if m.defaultExpectation != nil {
-		m.mock.t.Fatalf("Default expectation is already set for the sqlStmt.Query method")
+func (mmQuery *mSqlStmtMockQuery) Set(f func(ctx context.Context, args ...interface{}) (s1 sqlRows, err error)) *SqlStmtMock {
+	if mmQuery.defaultExpectation != nil {
+		mmQuery.mock.t.Fatalf("Default expectation is already set for the sqlStmt.Query method")
 	}
 
-	if len(m.expectations) > 0 {
-		m.mock.t.Fatalf("Some expectations are already set for the sqlStmt.Query method")
+	if len(mmQuery.expectations) > 0 {
+		mmQuery.mock.t.Fatalf("Some expectations are already set for the sqlStmt.Query method")
 	}
 
-	m.mock.funcQuery = f
-	return m.mock
+	mmQuery.mock.funcQuery = f
+	return mmQuery.mock
 }
 
 // When sets expectation for the sqlStmt.Query which will trigger the result defined by the following
 // Then helper
-func (m *mSqlStmtMockQuery) When(ctx context.Context, args ...interface{}) *SqlStmtMockQueryExpectation {
-	if m.mock.funcQuery != nil {
-		m.mock.t.Fatalf("SqlStmtMock.Query mock is already set by Set")
+func (mmQuery *mSqlStmtMockQuery) When(ctx context.Context, args ...interface{}) *SqlStmtMockQueryExpectation {
+	if mmQuery.mock.funcQuery != nil {
+		mmQuery.mock.t.Fatalf("SqlStmtMock.Query mock is already set by Set")
 	}
 
 	expectation := &SqlStmtMockQueryExpectation{
-		mock:   m.mock,
+		mock:   mmQuery.mock,
 		params: &SqlStmtMockQueryParams{ctx, args},
 	}
-	m.expectations = append(m.expectations, expectation)
+	mmQuery.expectations = append(mmQuery.expectations, expectation)
 	return expectation
 }
 
@@ -446,46 +522,70 @@ func (e *SqlStmtMockQueryExpectation) Then(s1 sqlRows, err error) *SqlStmtMock {
 }
 
 // Query implements sqlStmt
-func (m *SqlStmtMock) Query(ctx context.Context, args ...interface{}) (s1 sqlRows, err error) {
-	mm_atomic.AddUint64(&m.beforeQueryCounter, 1)
-	defer mm_atomic.AddUint64(&m.afterQueryCounter, 1)
+func (mmQuery *SqlStmtMock) Query(ctx context.Context, args ...interface{}) (s1 sqlRows, err error) {
+	mm_atomic.AddUint64(&mmQuery.beforeQueryCounter, 1)
+	defer mm_atomic.AddUint64(&mmQuery.afterQueryCounter, 1)
 
-	for _, e := range m.QueryMock.expectations {
-		if minimock.Equal(*e.params, SqlStmtMockQueryParams{ctx, args}) {
+	if mmQuery.inspectFuncQuery != nil {
+		mmQuery.inspectFuncQuery(ctx, args...)
+	}
+
+	mm_params := &SqlStmtMockQueryParams{ctx, args}
+
+	// Record call args
+	mmQuery.QueryMock.mutex.Lock()
+	mmQuery.QueryMock.callArgs = append(mmQuery.QueryMock.callArgs, mm_params)
+	mmQuery.QueryMock.mutex.Unlock()
+
+	for _, e := range mmQuery.QueryMock.expectations {
+		if minimock.Equal(e.params, mm_params) {
 			mm_atomic.AddUint64(&e.Counter, 1)
 			return e.results.s1, e.results.err
 		}
 	}
 
-	if m.QueryMock.defaultExpectation != nil {
-		mm_atomic.AddUint64(&m.QueryMock.defaultExpectation.Counter, 1)
-		want := m.QueryMock.defaultExpectation.params
-		got := SqlStmtMockQueryParams{ctx, args}
-		if want != nil && !minimock.Equal(*want, got) {
-			m.t.Errorf("SqlStmtMock.Query got unexpected parameters, want: %#v, got: %#v%s\n", *want, got, minimock.Diff(*want, got))
+	if mmQuery.QueryMock.defaultExpectation != nil {
+		mm_atomic.AddUint64(&mmQuery.QueryMock.defaultExpectation.Counter, 1)
+		mm_want := mmQuery.QueryMock.defaultExpectation.params
+		mm_got := SqlStmtMockQueryParams{ctx, args}
+		if mm_want != nil && !minimock.Equal(*mm_want, mm_got) {
+			mmQuery.t.Errorf("SqlStmtMock.Query got unexpected parameters, want: %#v, got: %#v%s\n", *mm_want, mm_got, minimock.Diff(*mm_want, mm_got))
 		}
 
-		results := m.QueryMock.defaultExpectation.results
-		if results == nil {
-			m.t.Fatal("No results are set for the SqlStmtMock.Query")
+		mm_results := mmQuery.QueryMock.defaultExpectation.results
+		if mm_results == nil {
+			mmQuery.t.Fatal("No results are set for the SqlStmtMock.Query")
 		}
-		return (*results).s1, (*results).err
+		return (*mm_results).s1, (*mm_results).err
 	}
-	if m.funcQuery != nil {
-		return m.funcQuery(ctx, args...)
+	if mmQuery.funcQuery != nil {
+		return mmQuery.funcQuery(ctx, args...)
 	}
-	m.t.Fatalf("Unexpected call to SqlStmtMock.Query. %v %v", ctx, args)
+	mmQuery.t.Fatalf("Unexpected call to SqlStmtMock.Query. %v %v", ctx, args)
 	return
 }
 
 // QueryAfterCounter returns a count of finished SqlStmtMock.Query invocations
-func (m *SqlStmtMock) QueryAfterCounter() uint64 {
-	return mm_atomic.LoadUint64(&m.afterQueryCounter)
+func (mmQuery *SqlStmtMock) QueryAfterCounter() uint64 {
+	return mm_atomic.LoadUint64(&mmQuery.afterQueryCounter)
 }
 
 // QueryBeforeCounter returns a count of SqlStmtMock.Query invocations
-func (m *SqlStmtMock) QueryBeforeCounter() uint64 {
-	return mm_atomic.LoadUint64(&m.beforeQueryCounter)
+func (mmQuery *SqlStmtMock) QueryBeforeCounter() uint64 {
+	return mm_atomic.LoadUint64(&mmQuery.beforeQueryCounter)
+}
+
+// Calls returns a list of arguments used in each call to SqlStmtMock.Query.
+// The list is in the same order as the calls were made (i.e. recent calls have a higher index)
+func (mmQuery *mSqlStmtMockQuery) Calls() []*SqlStmtMockQueryParams {
+	mmQuery.mutex.RLock()
+
+	argCopy := make([]*SqlStmtMockQueryParams, len(mmQuery.callArgs))
+	copy(argCopy, mmQuery.callArgs)
+
+	mmQuery.mutex.RUnlock()
+
+	return argCopy
 }
 
 // MinimockQueryDone returns true if the count of the Query invocations corresponds

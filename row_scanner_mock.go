@@ -6,7 +6,7 @@ import (
 	mm_atomic "sync/atomic"
 	mm_time "time"
 
-	"github.com/gojuno/minimock"
+	"github.com/gojuno/minimock/v3"
 )
 
 // RowScannerMock implements RowScanner
@@ -14,11 +14,13 @@ type RowScannerMock struct {
 	t minimock.Tester
 
 	funcInto          func() (pa1 []interface{})
+	inspectFuncInto   func()
 	afterIntoCounter  uint64
 	beforeIntoCounter uint64
 	IntoMock          mRowScannerMockInto
 
 	funcRowScanned          func() (err error)
+	inspectFuncRowScanned   func()
 	afterRowScannedCounter  uint64
 	beforeRowScannedCounter uint64
 	RowScannedMock          mRowScannerMockRowScanned
@@ -30,7 +32,9 @@ func NewRowScannerMock(t minimock.Tester) *RowScannerMock {
 	if controller, ok := t.(minimock.MockController); ok {
 		controller.RegisterMocker(m)
 	}
+
 	m.IntoMock = mRowScannerMockInto{mock: m}
+
 	m.RowScannedMock = mRowScannerMockRowScanned{mock: m}
 
 	return m
@@ -56,74 +60,89 @@ type RowScannerMockIntoResults struct {
 }
 
 // Expect sets up expected params for RowScanner.Into
-func (m *mRowScannerMockInto) Expect() *mRowScannerMockInto {
-	if m.mock.funcInto != nil {
-		m.mock.t.Fatalf("RowScannerMock.Into mock is already set by Set")
+func (mmInto *mRowScannerMockInto) Expect() *mRowScannerMockInto {
+	if mmInto.mock.funcInto != nil {
+		mmInto.mock.t.Fatalf("RowScannerMock.Into mock is already set by Set")
 	}
 
-	if m.defaultExpectation == nil {
-		m.defaultExpectation = &RowScannerMockIntoExpectation{}
+	if mmInto.defaultExpectation == nil {
+		mmInto.defaultExpectation = &RowScannerMockIntoExpectation{}
 	}
 
-	return m
+	return mmInto
+}
+
+// Inspect accepts an inspector function that has same arguments as the RowScanner.Into
+func (mmInto *mRowScannerMockInto) Inspect(f func()) *mRowScannerMockInto {
+	if mmInto.mock.inspectFuncInto != nil {
+		mmInto.mock.t.Fatalf("Inspect function is already set for RowScannerMock.Into")
+	}
+
+	mmInto.mock.inspectFuncInto = f
+
+	return mmInto
 }
 
 // Return sets up results that will be returned by RowScanner.Into
-func (m *mRowScannerMockInto) Return(pa1 []interface{}) *RowScannerMock {
-	if m.mock.funcInto != nil {
-		m.mock.t.Fatalf("RowScannerMock.Into mock is already set by Set")
+func (mmInto *mRowScannerMockInto) Return(pa1 []interface{}) *RowScannerMock {
+	if mmInto.mock.funcInto != nil {
+		mmInto.mock.t.Fatalf("RowScannerMock.Into mock is already set by Set")
 	}
 
-	if m.defaultExpectation == nil {
-		m.defaultExpectation = &RowScannerMockIntoExpectation{mock: m.mock}
+	if mmInto.defaultExpectation == nil {
+		mmInto.defaultExpectation = &RowScannerMockIntoExpectation{mock: mmInto.mock}
 	}
-	m.defaultExpectation.results = &RowScannerMockIntoResults{pa1}
-	return m.mock
+	mmInto.defaultExpectation.results = &RowScannerMockIntoResults{pa1}
+	return mmInto.mock
 }
 
 //Set uses given function f to mock the RowScanner.Into method
-func (m *mRowScannerMockInto) Set(f func() (pa1 []interface{})) *RowScannerMock {
-	if m.defaultExpectation != nil {
-		m.mock.t.Fatalf("Default expectation is already set for the RowScanner.Into method")
+func (mmInto *mRowScannerMockInto) Set(f func() (pa1 []interface{})) *RowScannerMock {
+	if mmInto.defaultExpectation != nil {
+		mmInto.mock.t.Fatalf("Default expectation is already set for the RowScanner.Into method")
 	}
 
-	if len(m.expectations) > 0 {
-		m.mock.t.Fatalf("Some expectations are already set for the RowScanner.Into method")
+	if len(mmInto.expectations) > 0 {
+		mmInto.mock.t.Fatalf("Some expectations are already set for the RowScanner.Into method")
 	}
 
-	m.mock.funcInto = f
-	return m.mock
+	mmInto.mock.funcInto = f
+	return mmInto.mock
 }
 
 // Into implements RowScanner
-func (m *RowScannerMock) Into() (pa1 []interface{}) {
-	mm_atomic.AddUint64(&m.beforeIntoCounter, 1)
-	defer mm_atomic.AddUint64(&m.afterIntoCounter, 1)
+func (mmInto *RowScannerMock) Into() (pa1 []interface{}) {
+	mm_atomic.AddUint64(&mmInto.beforeIntoCounter, 1)
+	defer mm_atomic.AddUint64(&mmInto.afterIntoCounter, 1)
 
-	if m.IntoMock.defaultExpectation != nil {
-		mm_atomic.AddUint64(&m.IntoMock.defaultExpectation.Counter, 1)
+	if mmInto.inspectFuncInto != nil {
+		mmInto.inspectFuncInto()
+	}
 
-		results := m.IntoMock.defaultExpectation.results
-		if results == nil {
-			m.t.Fatal("No results are set for the RowScannerMock.Into")
+	if mmInto.IntoMock.defaultExpectation != nil {
+		mm_atomic.AddUint64(&mmInto.IntoMock.defaultExpectation.Counter, 1)
+
+		mm_results := mmInto.IntoMock.defaultExpectation.results
+		if mm_results == nil {
+			mmInto.t.Fatal("No results are set for the RowScannerMock.Into")
 		}
-		return (*results).pa1
+		return (*mm_results).pa1
 	}
-	if m.funcInto != nil {
-		return m.funcInto()
+	if mmInto.funcInto != nil {
+		return mmInto.funcInto()
 	}
-	m.t.Fatalf("Unexpected call to RowScannerMock.Into.")
+	mmInto.t.Fatalf("Unexpected call to RowScannerMock.Into.")
 	return
 }
 
 // IntoAfterCounter returns a count of finished RowScannerMock.Into invocations
-func (m *RowScannerMock) IntoAfterCounter() uint64 {
-	return mm_atomic.LoadUint64(&m.afterIntoCounter)
+func (mmInto *RowScannerMock) IntoAfterCounter() uint64 {
+	return mm_atomic.LoadUint64(&mmInto.afterIntoCounter)
 }
 
 // IntoBeforeCounter returns a count of RowScannerMock.Into invocations
-func (m *RowScannerMock) IntoBeforeCounter() uint64 {
-	return mm_atomic.LoadUint64(&m.beforeIntoCounter)
+func (mmInto *RowScannerMock) IntoBeforeCounter() uint64 {
+	return mm_atomic.LoadUint64(&mmInto.beforeIntoCounter)
 }
 
 // MinimockIntoDone returns true if the count of the Into invocations corresponds
@@ -184,74 +203,89 @@ type RowScannerMockRowScannedResults struct {
 }
 
 // Expect sets up expected params for RowScanner.RowScanned
-func (m *mRowScannerMockRowScanned) Expect() *mRowScannerMockRowScanned {
-	if m.mock.funcRowScanned != nil {
-		m.mock.t.Fatalf("RowScannerMock.RowScanned mock is already set by Set")
+func (mmRowScanned *mRowScannerMockRowScanned) Expect() *mRowScannerMockRowScanned {
+	if mmRowScanned.mock.funcRowScanned != nil {
+		mmRowScanned.mock.t.Fatalf("RowScannerMock.RowScanned mock is already set by Set")
 	}
 
-	if m.defaultExpectation == nil {
-		m.defaultExpectation = &RowScannerMockRowScannedExpectation{}
+	if mmRowScanned.defaultExpectation == nil {
+		mmRowScanned.defaultExpectation = &RowScannerMockRowScannedExpectation{}
 	}
 
-	return m
+	return mmRowScanned
+}
+
+// Inspect accepts an inspector function that has same arguments as the RowScanner.RowScanned
+func (mmRowScanned *mRowScannerMockRowScanned) Inspect(f func()) *mRowScannerMockRowScanned {
+	if mmRowScanned.mock.inspectFuncRowScanned != nil {
+		mmRowScanned.mock.t.Fatalf("Inspect function is already set for RowScannerMock.RowScanned")
+	}
+
+	mmRowScanned.mock.inspectFuncRowScanned = f
+
+	return mmRowScanned
 }
 
 // Return sets up results that will be returned by RowScanner.RowScanned
-func (m *mRowScannerMockRowScanned) Return(err error) *RowScannerMock {
-	if m.mock.funcRowScanned != nil {
-		m.mock.t.Fatalf("RowScannerMock.RowScanned mock is already set by Set")
+func (mmRowScanned *mRowScannerMockRowScanned) Return(err error) *RowScannerMock {
+	if mmRowScanned.mock.funcRowScanned != nil {
+		mmRowScanned.mock.t.Fatalf("RowScannerMock.RowScanned mock is already set by Set")
 	}
 
-	if m.defaultExpectation == nil {
-		m.defaultExpectation = &RowScannerMockRowScannedExpectation{mock: m.mock}
+	if mmRowScanned.defaultExpectation == nil {
+		mmRowScanned.defaultExpectation = &RowScannerMockRowScannedExpectation{mock: mmRowScanned.mock}
 	}
-	m.defaultExpectation.results = &RowScannerMockRowScannedResults{err}
-	return m.mock
+	mmRowScanned.defaultExpectation.results = &RowScannerMockRowScannedResults{err}
+	return mmRowScanned.mock
 }
 
 //Set uses given function f to mock the RowScanner.RowScanned method
-func (m *mRowScannerMockRowScanned) Set(f func() (err error)) *RowScannerMock {
-	if m.defaultExpectation != nil {
-		m.mock.t.Fatalf("Default expectation is already set for the RowScanner.RowScanned method")
+func (mmRowScanned *mRowScannerMockRowScanned) Set(f func() (err error)) *RowScannerMock {
+	if mmRowScanned.defaultExpectation != nil {
+		mmRowScanned.mock.t.Fatalf("Default expectation is already set for the RowScanner.RowScanned method")
 	}
 
-	if len(m.expectations) > 0 {
-		m.mock.t.Fatalf("Some expectations are already set for the RowScanner.RowScanned method")
+	if len(mmRowScanned.expectations) > 0 {
+		mmRowScanned.mock.t.Fatalf("Some expectations are already set for the RowScanner.RowScanned method")
 	}
 
-	m.mock.funcRowScanned = f
-	return m.mock
+	mmRowScanned.mock.funcRowScanned = f
+	return mmRowScanned.mock
 }
 
 // RowScanned implements RowScanner
-func (m *RowScannerMock) RowScanned() (err error) {
-	mm_atomic.AddUint64(&m.beforeRowScannedCounter, 1)
-	defer mm_atomic.AddUint64(&m.afterRowScannedCounter, 1)
+func (mmRowScanned *RowScannerMock) RowScanned() (err error) {
+	mm_atomic.AddUint64(&mmRowScanned.beforeRowScannedCounter, 1)
+	defer mm_atomic.AddUint64(&mmRowScanned.afterRowScannedCounter, 1)
 
-	if m.RowScannedMock.defaultExpectation != nil {
-		mm_atomic.AddUint64(&m.RowScannedMock.defaultExpectation.Counter, 1)
+	if mmRowScanned.inspectFuncRowScanned != nil {
+		mmRowScanned.inspectFuncRowScanned()
+	}
 
-		results := m.RowScannedMock.defaultExpectation.results
-		if results == nil {
-			m.t.Fatal("No results are set for the RowScannerMock.RowScanned")
+	if mmRowScanned.RowScannedMock.defaultExpectation != nil {
+		mm_atomic.AddUint64(&mmRowScanned.RowScannedMock.defaultExpectation.Counter, 1)
+
+		mm_results := mmRowScanned.RowScannedMock.defaultExpectation.results
+		if mm_results == nil {
+			mmRowScanned.t.Fatal("No results are set for the RowScannerMock.RowScanned")
 		}
-		return (*results).err
+		return (*mm_results).err
 	}
-	if m.funcRowScanned != nil {
-		return m.funcRowScanned()
+	if mmRowScanned.funcRowScanned != nil {
+		return mmRowScanned.funcRowScanned()
 	}
-	m.t.Fatalf("Unexpected call to RowScannerMock.RowScanned.")
+	mmRowScanned.t.Fatalf("Unexpected call to RowScannerMock.RowScanned.")
 	return
 }
 
 // RowScannedAfterCounter returns a count of finished RowScannerMock.RowScanned invocations
-func (m *RowScannerMock) RowScannedAfterCounter() uint64 {
-	return mm_atomic.LoadUint64(&m.afterRowScannedCounter)
+func (mmRowScanned *RowScannerMock) RowScannedAfterCounter() uint64 {
+	return mm_atomic.LoadUint64(&mmRowScanned.afterRowScannedCounter)
 }
 
 // RowScannedBeforeCounter returns a count of RowScannerMock.RowScanned invocations
-func (m *RowScannerMock) RowScannedBeforeCounter() uint64 {
-	return mm_atomic.LoadUint64(&m.beforeRowScannedCounter)
+func (mmRowScanned *RowScannerMock) RowScannedBeforeCounter() uint64 {
+	return mm_atomic.LoadUint64(&mmRowScanned.beforeRowScannedCounter)
 }
 
 // MinimockRowScannedDone returns true if the count of the RowScanned invocations corresponds
