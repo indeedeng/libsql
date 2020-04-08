@@ -107,7 +107,7 @@ func (s *StatementSuite) TestUpdateAndGetLastInsertID() {
 
 func (s *StatementSuite) doTestScan(
 	scan func(context.Context, RowScanner, ...interface{}) error,
-	oneRow bool,
+	expectedOneRow bool,
 ) {
 	expRowScanner := NewRowScannerMock(s.T())
 	defer expRowScanner.MinimockFinish()
@@ -124,6 +124,8 @@ func (s *StatementSuite) doTestScan(
 	).Then(expSqlRows, (error)(nil))
 
 	s.scan.DoMock.Set(func(rowScanner RowScanner, oneRow bool, query func() (sqlRows, error)) (err error) {
+		s.Require().Equal(expRowScanner, rowScanner)
+		s.Require().Equal(expectedOneRow, oneRow)
 		// execute query and and the assertion is that the call is
 		// delegated to queryer
 		_, _ = query()
