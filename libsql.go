@@ -44,7 +44,7 @@ type Queryer interface {
 	// Scan executes sql and scans result rows with RowScanner
 	Scan(ctx context.Context, scanner RowScanner, sql string, args ...interface{}) error
 
-	// Scans executes sql and scans the first result row with RowScanner.
+	// ScanOne executes sql and scans the first result row with RowScanner.
 	// Returns ErrNoRows if no rows were returned. Remaining rows are discarded
 	ScanOne(ctx context.Context, scanner RowScanner, sql string, args ...interface{}) error
 
@@ -55,7 +55,7 @@ type Queryer interface {
 	// Shorthand for Update(...) followed by UpdateResult.RowsAffected
 	UpdateAndGetRowsAffected(ctx context.Context, sql string, args ...interface{}) (int64, error)
 
-	// InsertAndGetLastInsertID sql insert, update, or delete and returns last generated row id.
+	// UpdateAndGetLastInsertID sql insert, update, or delete and returns last generated row id.
 	// Shorthand for Update(...) followed by UpdateResult.LastInsertId
 	UpdateAndGetLastInsertID(ctx context.Context, sql string, args ...interface{}) (int64, error)
 }
@@ -76,7 +76,7 @@ type Statement interface {
 	// Scan executes the prepared statement and scans result rows with RowScanner
 	Scan(ctx context.Context, scanner RowScanner, args ...interface{}) error
 
-	// Scans executes the prepared statement and scans the first result row with RowScanner.
+	// ScanOne executes the prepared statement and scans the first result row with RowScanner.
 	// Returns ErrNoRows if no rows were returned. Remaining rows are discarded
 	ScanOne(ctx context.Context, scanner RowScanner, args ...interface{}) error
 
@@ -87,7 +87,7 @@ type Statement interface {
 	// Shorthand for Update(...) followed by UpdateResult.RowsAffected
 	UpdateAndGetRowsAffected(ctx context.Context, args ...interface{}) (int64, error)
 
-	// InsertAndGetLastInsertID the prepared insert, update, or delete and returns last generated row id.
+	// UpdateAndGetLastInsertID the prepared insert, update, or delete and returns last generated row id.
 	// Shorthand for Update(...) followed by UpdateResult.LastInsertId
 	UpdateAndGetLastInsertID(ctx context.Context, args ...interface{}) (int64, error)
 }
