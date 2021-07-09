@@ -152,6 +152,51 @@ func Test_databaseImpl_TransactionIsRolledBackOnWorkPanic(t *testing.T) {
 	require.Equal(t, 1, workFuncCalls)
 }
 
+func Test_databaseImpl_PrepareStatement(t *testing.T) {
+	ctx := context.WithValue(context.Background(), "a-key-to-make-a-unique-context", "a-value")
+	const expectedQuery = "SELECT 1 FROM DUAL"
+
+	sqlStmt := NewSqlStmtMock(t)
+	defer sqlStmt.MinimockFinish()
+
+	expectedExecError := errors.New("an-expected-exec-error")
+	sqlStmt.
+		ExecMock.Expect(ctx).Return(nil, expectedExecError).
+		CloseMock.Expect().Return(nil)
+
+	sqlDB := NewSqlDBMock(t)
+	defer sqlDB.MinimockFinish()
+
+	sqlDB.PrepareMock.
+		Expect(ctx, expectedQuery).
+		Return(sqlStmt, nil)
+
+	s, err := newDatabase(sqlDB).PrepareStatement(ctx, expectedQuery)
+	require.NoError(t, err)
+	_, err = s.Update(ctx)
+	require.Error(t, err)
+	require.Equal(t, expectedExecError, err)
+	err = s.Close()
+	require.NoError(t, err)
+}
+
+func Test_databaseImpl_PrepareStatement_propagatesErrors(t *testing.T) {
+	ctx := context.WithValue(context.Background(), "a-key-to-make-a-unique-context", "a-value")
+	const expectedQuery = "SELECT 1 FROM DUAL"
+
+	sqlDB := NewSqlDBMock(t)
+	defer sqlDB.MinimockFinish()
+
+	expectedError := errors.New("a-test-error")
+	sqlDB.PrepareMock.
+		Expect(ctx, expectedQuery).
+		Return(nil, expectedError)
+
+	_, err := newDatabase(sqlDB).PrepareStatement(ctx, expectedQuery)
+	require.Error(t, err)
+	require.Equal(t, expectedError, err)
+}
+
 func Test_databaseImpl_CloseIsPropagated(t *testing.T) {
 	sqlDB := NewSqlDBMock(t)
 	defer sqlDB.MinimockFinish()

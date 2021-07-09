@@ -24,6 +24,27 @@ type Database interface {
 	// Transaction performs work in transaction.
 	// Transaction is committed if work returns nil, and rolled back otherwise.
 	Transaction(ctx context.Context, work func(Transaction) error) error
+
+	// PrepareStatement prepares a statement for later queries.
+	//
+	// In addition to preparing a statement on a single connection, the returned
+	// PreparedStatement can use other connections from the Database's connection
+	// pool re-preparing the statement as needed.
+	// PreparedStatement is safe for concurrent use.
+	// Refer to sql.Stmt's godoc for details.
+	//
+	// It is best to use this API for queries that are executed frequently from
+	// different contexts. For example, using a PreparedStatement to fetch data
+	// served via a service's HTTP API endpoint by many goroutines can reduce
+	// the latency considerably.
+	// In other scenarios, prefer using the Prepared method: it takes care of
+	// closing the Statement and is thus less error-prone.
+	//
+	// The provided context is used for the preparation of the statement, not
+	// for its execution.
+	// The caller must call Close on the returned PreparedStatement when it is
+	// no longer needed.
+	PrepareStatement(ctx context.Context, sql string) (PreparedStatement, error)
 }
 
 //go:generate go run github.com/gojuno/minimock/v3/cmd/minimock -g -i Transaction -o libsqltest/ -s _mock.go
@@ -90,6 +111,14 @@ type Statement interface {
 	// UpdateAndGetLastInsertID the prepared insert, update, or delete and returns last generated row id.
 	// Shorthand for Update(...) followed by UpdateResult.LastInsertId
 	UpdateAndGetLastInsertID(ctx context.Context, args ...interface{}) (int64, error)
+}
+
+//go:generate go run github.com/gojuno/minimock/v3/cmd/minimock -g -i PreparedStatement -o libsqltest/ -s _mock.go
+
+// PreparedStatement is a Statement that must be closed by the caller
+type PreparedStatement interface {
+	io.Closer
+	Statement
 }
 
 //go:generate go run github.com/gojuno/minimock/v3/cmd/minimock -g -i RowScanner -o libsqltest/ -s _mock.go
