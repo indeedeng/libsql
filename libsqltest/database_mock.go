@@ -23,6 +23,12 @@ type DatabaseMock struct {
 	beforeCloseCounter uint64
 	CloseMock          mDatabaseMockClose
 
+	funcPrepareStatement          func(ctx context.Context, sql string) (p1 mm_libsql.PreparedStatement, err error)
+	inspectFuncPrepareStatement   func(ctx context.Context, sql string)
+	afterPrepareStatementCounter  uint64
+	beforePrepareStatementCounter uint64
+	PrepareStatementMock          mDatabaseMockPrepareStatement
+
 	funcPrepared          func(ctx context.Context, sql string, work func(mm_libsql.Statement) error) (err error)
 	inspectFuncPrepared   func(ctx context.Context, sql string, work func(mm_libsql.Statement) error)
 	afterPreparedCounter  uint64
@@ -74,6 +80,9 @@ func NewDatabaseMock(t minimock.Tester) *DatabaseMock {
 	}
 
 	m.CloseMock = mDatabaseMockClose{mock: m}
+
+	m.PrepareStatementMock = mDatabaseMockPrepareStatement{mock: m}
+	m.PrepareStatementMock.callArgs = []*DatabaseMockPrepareStatementParams{}
 
 	m.PreparedMock = mDatabaseMockPrepared{mock: m}
 	m.PreparedMock.callArgs = []*DatabaseMockPreparedParams{}
@@ -239,6 +248,223 @@ func (m *DatabaseMock) MinimockCloseInspect() {
 	// if func was set then invocations count should be greater than zero
 	if m.funcClose != nil && mm_atomic.LoadUint64(&m.afterCloseCounter) < 1 {
 		m.t.Error("Expected call to DatabaseMock.Close")
+	}
+}
+
+type mDatabaseMockPrepareStatement struct {
+	mock               *DatabaseMock
+	defaultExpectation *DatabaseMockPrepareStatementExpectation
+	expectations       []*DatabaseMockPrepareStatementExpectation
+
+	callArgs []*DatabaseMockPrepareStatementParams
+	mutex    sync.RWMutex
+}
+
+// DatabaseMockPrepareStatementExpectation specifies expectation struct of the Database.PrepareStatement
+type DatabaseMockPrepareStatementExpectation struct {
+	mock    *DatabaseMock
+	params  *DatabaseMockPrepareStatementParams
+	results *DatabaseMockPrepareStatementResults
+	Counter uint64
+}
+
+// DatabaseMockPrepareStatementParams contains parameters of the Database.PrepareStatement
+type DatabaseMockPrepareStatementParams struct {
+	ctx context.Context
+	sql string
+}
+
+// DatabaseMockPrepareStatementResults contains results of the Database.PrepareStatement
+type DatabaseMockPrepareStatementResults struct {
+	p1  mm_libsql.PreparedStatement
+	err error
+}
+
+// Expect sets up expected params for Database.PrepareStatement
+func (mmPrepareStatement *mDatabaseMockPrepareStatement) Expect(ctx context.Context, sql string) *mDatabaseMockPrepareStatement {
+	if mmPrepareStatement.mock.funcPrepareStatement != nil {
+		mmPrepareStatement.mock.t.Fatalf("DatabaseMock.PrepareStatement mock is already set by Set")
+	}
+
+	if mmPrepareStatement.defaultExpectation == nil {
+		mmPrepareStatement.defaultExpectation = &DatabaseMockPrepareStatementExpectation{}
+	}
+
+	mmPrepareStatement.defaultExpectation.params = &DatabaseMockPrepareStatementParams{ctx, sql}
+	for _, e := range mmPrepareStatement.expectations {
+		if minimock.Equal(e.params, mmPrepareStatement.defaultExpectation.params) {
+			mmPrepareStatement.mock.t.Fatalf("Expectation set by When has same params: %#v", *mmPrepareStatement.defaultExpectation.params)
+		}
+	}
+
+	return mmPrepareStatement
+}
+
+// Inspect accepts an inspector function that has same arguments as the Database.PrepareStatement
+func (mmPrepareStatement *mDatabaseMockPrepareStatement) Inspect(f func(ctx context.Context, sql string)) *mDatabaseMockPrepareStatement {
+	if mmPrepareStatement.mock.inspectFuncPrepareStatement != nil {
+		mmPrepareStatement.mock.t.Fatalf("Inspect function is already set for DatabaseMock.PrepareStatement")
+	}
+
+	mmPrepareStatement.mock.inspectFuncPrepareStatement = f
+
+	return mmPrepareStatement
+}
+
+// Return sets up results that will be returned by Database.PrepareStatement
+func (mmPrepareStatement *mDatabaseMockPrepareStatement) Return(p1 mm_libsql.PreparedStatement, err error) *DatabaseMock {
+	if mmPrepareStatement.mock.funcPrepareStatement != nil {
+		mmPrepareStatement.mock.t.Fatalf("DatabaseMock.PrepareStatement mock is already set by Set")
+	}
+
+	if mmPrepareStatement.defaultExpectation == nil {
+		mmPrepareStatement.defaultExpectation = &DatabaseMockPrepareStatementExpectation{mock: mmPrepareStatement.mock}
+	}
+	mmPrepareStatement.defaultExpectation.results = &DatabaseMockPrepareStatementResults{p1, err}
+	return mmPrepareStatement.mock
+}
+
+//Set uses given function f to mock the Database.PrepareStatement method
+func (mmPrepareStatement *mDatabaseMockPrepareStatement) Set(f func(ctx context.Context, sql string) (p1 mm_libsql.PreparedStatement, err error)) *DatabaseMock {
+	if mmPrepareStatement.defaultExpectation != nil {
+		mmPrepareStatement.mock.t.Fatalf("Default expectation is already set for the Database.PrepareStatement method")
+	}
+
+	if len(mmPrepareStatement.expectations) > 0 {
+		mmPrepareStatement.mock.t.Fatalf("Some expectations are already set for the Database.PrepareStatement method")
+	}
+
+	mmPrepareStatement.mock.funcPrepareStatement = f
+	return mmPrepareStatement.mock
+}
+
+// When sets expectation for the Database.PrepareStatement which will trigger the result defined by the following
+// Then helper
+func (mmPrepareStatement *mDatabaseMockPrepareStatement) When(ctx context.Context, sql string) *DatabaseMockPrepareStatementExpectation {
+	if mmPrepareStatement.mock.funcPrepareStatement != nil {
+		mmPrepareStatement.mock.t.Fatalf("DatabaseMock.PrepareStatement mock is already set by Set")
+	}
+
+	expectation := &DatabaseMockPrepareStatementExpectation{
+		mock:   mmPrepareStatement.mock,
+		params: &DatabaseMockPrepareStatementParams{ctx, sql},
+	}
+	mmPrepareStatement.expectations = append(mmPrepareStatement.expectations, expectation)
+	return expectation
+}
+
+// Then sets up Database.PrepareStatement return parameters for the expectation previously defined by the When method
+func (e *DatabaseMockPrepareStatementExpectation) Then(p1 mm_libsql.PreparedStatement, err error) *DatabaseMock {
+	e.results = &DatabaseMockPrepareStatementResults{p1, err}
+	return e.mock
+}
+
+// PrepareStatement implements libsql.Database
+func (mmPrepareStatement *DatabaseMock) PrepareStatement(ctx context.Context, sql string) (p1 mm_libsql.PreparedStatement, err error) {
+	mm_atomic.AddUint64(&mmPrepareStatement.beforePrepareStatementCounter, 1)
+	defer mm_atomic.AddUint64(&mmPrepareStatement.afterPrepareStatementCounter, 1)
+
+	if mmPrepareStatement.inspectFuncPrepareStatement != nil {
+		mmPrepareStatement.inspectFuncPrepareStatement(ctx, sql)
+	}
+
+	mm_params := &DatabaseMockPrepareStatementParams{ctx, sql}
+
+	// Record call args
+	mmPrepareStatement.PrepareStatementMock.mutex.Lock()
+	mmPrepareStatement.PrepareStatementMock.callArgs = append(mmPrepareStatement.PrepareStatementMock.callArgs, mm_params)
+	mmPrepareStatement.PrepareStatementMock.mutex.Unlock()
+
+	for _, e := range mmPrepareStatement.PrepareStatementMock.expectations {
+		if minimock.Equal(e.params, mm_params) {
+			mm_atomic.AddUint64(&e.Counter, 1)
+			return e.results.p1, e.results.err
+		}
+	}
+
+	if mmPrepareStatement.PrepareStatementMock.defaultExpectation != nil {
+		mm_atomic.AddUint64(&mmPrepareStatement.PrepareStatementMock.defaultExpectation.Counter, 1)
+		mm_want := mmPrepareStatement.PrepareStatementMock.defaultExpectation.params
+		mm_got := DatabaseMockPrepareStatementParams{ctx, sql}
+		if mm_want != nil && !minimock.Equal(*mm_want, mm_got) {
+			mmPrepareStatement.t.Errorf("DatabaseMock.PrepareStatement got unexpected parameters, want: %#v, got: %#v%s\n", *mm_want, mm_got, minimock.Diff(*mm_want, mm_got))
+		}
+
+		mm_results := mmPrepareStatement.PrepareStatementMock.defaultExpectation.results
+		if mm_results == nil {
+			mmPrepareStatement.t.Fatal("No results are set for the DatabaseMock.PrepareStatement")
+		}
+		return (*mm_results).p1, (*mm_results).err
+	}
+	if mmPrepareStatement.funcPrepareStatement != nil {
+		return mmPrepareStatement.funcPrepareStatement(ctx, sql)
+	}
+	mmPrepareStatement.t.Fatalf("Unexpected call to DatabaseMock.PrepareStatement. %v %v", ctx, sql)
+	return
+}
+
+// PrepareStatementAfterCounter returns a count of finished DatabaseMock.PrepareStatement invocations
+func (mmPrepareStatement *DatabaseMock) PrepareStatementAfterCounter() uint64 {
+	return mm_atomic.LoadUint64(&mmPrepareStatement.afterPrepareStatementCounter)
+}
+
+// PrepareStatementBeforeCounter returns a count of DatabaseMock.PrepareStatement invocations
+func (mmPrepareStatement *DatabaseMock) PrepareStatementBeforeCounter() uint64 {
+	return mm_atomic.LoadUint64(&mmPrepareStatement.beforePrepareStatementCounter)
+}
+
+// Calls returns a list of arguments used in each call to DatabaseMock.PrepareStatement.
+// The list is in the same order as the calls were made (i.e. recent calls have a higher index)
+func (mmPrepareStatement *mDatabaseMockPrepareStatement) Calls() []*DatabaseMockPrepareStatementParams {
+	mmPrepareStatement.mutex.RLock()
+
+	argCopy := make([]*DatabaseMockPrepareStatementParams, len(mmPrepareStatement.callArgs))
+	copy(argCopy, mmPrepareStatement.callArgs)
+
+	mmPrepareStatement.mutex.RUnlock()
+
+	return argCopy
+}
+
+// MinimockPrepareStatementDone returns true if the count of the PrepareStatement invocations corresponds
+// the number of defined expectations
+func (m *DatabaseMock) MinimockPrepareStatementDone() bool {
+	for _, e := range m.PrepareStatementMock.expectations {
+		if mm_atomic.LoadUint64(&e.Counter) < 1 {
+			return false
+		}
+	}
+
+	// if default expectation was set then invocations count should be greater than zero
+	if m.PrepareStatementMock.defaultExpectation != nil && mm_atomic.LoadUint64(&m.afterPrepareStatementCounter) < 1 {
+		return false
+	}
+	// if func was set then invocations count should be greater than zero
+	if m.funcPrepareStatement != nil && mm_atomic.LoadUint64(&m.afterPrepareStatementCounter) < 1 {
+		return false
+	}
+	return true
+}
+
+// MinimockPrepareStatementInspect logs each unmet expectation
+func (m *DatabaseMock) MinimockPrepareStatementInspect() {
+	for _, e := range m.PrepareStatementMock.expectations {
+		if mm_atomic.LoadUint64(&e.Counter) < 1 {
+			m.t.Errorf("Expected call to DatabaseMock.PrepareStatement with params: %#v", *e.params)
+		}
+	}
+
+	// if default expectation was set then invocations count should be greater than zero
+	if m.PrepareStatementMock.defaultExpectation != nil && mm_atomic.LoadUint64(&m.afterPrepareStatementCounter) < 1 {
+		if m.PrepareStatementMock.defaultExpectation.params == nil {
+			m.t.Error("Expected call to DatabaseMock.PrepareStatement")
+		} else {
+			m.t.Errorf("Expected call to DatabaseMock.PrepareStatement with params: %#v", *m.PrepareStatementMock.defaultExpectation.params)
+		}
+	}
+	// if func was set then invocations count should be greater than zero
+	if m.funcPrepareStatement != nil && mm_atomic.LoadUint64(&m.afterPrepareStatementCounter) < 1 {
+		m.t.Error("Expected call to DatabaseMock.PrepareStatement")
 	}
 }
 
@@ -1770,6 +1996,8 @@ func (m *DatabaseMock) MinimockFinish() {
 	if !m.minimockDone() {
 		m.MinimockCloseInspect()
 
+		m.MinimockPrepareStatementInspect()
+
 		m.MinimockPreparedInspect()
 
 		m.MinimockScanInspect()
@@ -1807,6 +2035,7 @@ func (m *DatabaseMock) minimockDone() bool {
 	done := true
 	return done &&
 		m.MinimockCloseDone() &&
+		m.MinimockPrepareStatementDone() &&
 		m.MinimockPreparedDone() &&
 		m.MinimockScanDone() &&
 		m.MinimockScanOneDone() &&
