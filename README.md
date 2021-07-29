@@ -21,8 +21,7 @@ $ go get oss.indeed.com/go/libsql
 ```
 
 
-The `libsql.Wrap` method can then be used to wrap a normal `*sql.DB`:
-
+To get started, use the `libsql.Wrap` method and pass a `*sql.DB`:
 ```go
 import (
 	"context"
@@ -31,11 +30,10 @@ import (
 	"oss.indeed.com/go/libsql"
 )
 
-func usageExample(sqldb *sql.DB) error {
+func usageExample(ctx context.Context, sqldb *sql.DB) error {
 	db := libsql.Wrap(sqldb)
 
 	var column1, column2, column3 int64
-	ctx := context.TODO()
 
 	err := db.ScanOne(
 		ctx,
@@ -51,6 +49,8 @@ func usageExample(sqldb *sql.DB) error {
 	if err != nil {
 		return err
 	}
+	
+	// use the values of column1, column2, column3
 }
 ```
 
