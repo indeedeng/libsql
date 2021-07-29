@@ -54,6 +54,52 @@ func usageExample(ctx context.Context, sqldb *sql.DB) error {
 }
 ```
 
+To scan multiple rows, provide a custom implementation of `libsql.RowScanner`: 
+```go
+
+import (
+	"context"
+
+	"oss.indeed.com/go/libsql"
+)
+
+type elephant struct {
+	name string
+}
+
+type elephantRowScanner struct {
+	rawElephantName string
+
+	elephants []elephant
+}
+
+var _ libsql.RowScanner = (*elephantRowScanner)(nil)
+
+func (e *elephantRowScanner) Into() []interface{} {
+	return []interface{}{&e.rawElephantName}
+}
+
+func (e *elephantRowScanner) RowScanned() error {
+	if e.rawElephantName == "" {
+		return errors.New("empty elephant name in the database")
+	}
+
+	e.elephants = append(e.elephants, elephant{name: e.rawElephantName})
+
+	return nil
+}
+
+func elephantsFrom(ctx context.Context, q libsql.Queryer) ([]elephant, error) {
+	elephantRS := elephantRowScanner{}
+	err := q.Scan(
+		ctx,
+		&elephantRS,
+		`SELECT * FROM (VALUES ROW ('Dumbo'), ROW ('Horton')) AS elephants(name)`,
+	)
+	return elephantsRS.elephants, err
+}
+```
+
 # Asking Questions
 
 For technical questions about `libsql`, just file an issue in the GitHub tracker.
